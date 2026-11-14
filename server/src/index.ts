@@ -1,0 +1,123 @@
+import { pathToFileURL } from 'node:url';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { ApiError, PairingService, makeAuthGuard, registerPairingRoute } from './auth.js';
+import { loadConfig, loadDotEnv, type Config } from './config.js';
+import { openDb, purgeEphemeral, type Db } from './db.js';
+import { registerConversationRoutes } from './routes/conversations.js';
+import { registerUsageRoutes } from './routes/usage.js';
+
+export interface AppContext {
+  config: Config;
+  db: Db;
+}
+
+const EPHEMERAL_SWEEP_MS = 24 * 60 * 60 * 1000;
+
+/** 构造 Fastify 实例但不 listen —— 测试用 app.inject 直接打路由。 */
+export function buildApp(ctx: AppContext): FastifyInstance {
+  const { config, db } = ctx;
+
+  const app = Fastify({
+    logger: config.logRequests ? { level: 'info' } : false,
+    bodyLimit: Math.max(1024 * 1024, config.maxContentChars * 8),
+  });
+
+  app.decorateRequest('deviceId', null);
+
+  // CORS 仅 dev(MOCK=1)放开,给 flutter run -d chrome 用
+  if (config.mock) {
+    app.addHook('onRequest', async (request, reply) => {
+      reply.header('Access-Control-Allow-Origin', '*');
+      reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      if (request.method === 'OPTIONS') reply.code(204).send();
+    });
+  }
+
+  app.setErrorHandler((error: unknown, request, reply) => {
+    if (error instanceof ApiError) {
+      return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
+    }
+    // 只有 schema 校验失败才带 validation 数组;FastifyError 上该字段可能存在但为 undefined
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      Array.isArray((error as { validation?: unknown }).validation)
+    ) {
+      const message = error instanceof Error ? error.message : '请求体校验失败';
+      return reply.code(400).send({ error: { code: 'validation_error', message } });
+    }
+    // Fastify 自身的客户端错误(415 不支持的 Content-Type、413 超限等)按原状态码透出
+    if (typeof error === 'object' && error !== null && 'statusCode' in error) {
+      const statusCode = Number((error as { statusCode: unknown }).statusCode);
+      if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+        const rawCode = 'code' in error ? (error as { code: unknown }).code : undefined;
+        const code = typeof rawCode === 'string' ? rawCode : 'bad_request';
+        const message = error instanceof Error ? error.message : '请求不合法';
+        return reply.code(statusCode).send({ error: { code, message } });
+      }
+    }
+    request.log.error({ err: error }, 'unhandled error');
+    return reply.code(500).send({ error: { code: 'internal_error', message: '服务器内部错误' } });
+  });
+
+  app.get('/health', async () => ({ ok: true, mock: config.mock }));
+
+  const pairing = new PairingService(config.pairingCode);
+  registerPairingRoute(app, db, pairing);
+
+  // 除 /health 与 /v1/pair 外的所有路由都要 Bearer 设备令牌
+  app.register(async (secured) => {
+    secured.addHook('preHandler', makeAuthGuard(db));
+    registerConversationRoutes(secured, ctx);
+    registerUsageRoutes(secured, ctx);
+  });
+
+  return app;
+}
+
+async function main(): Promise<void> {
+  loadDotEnv();
+  const config = loadConfig();
+  const db = openDb(config.dbPath);
+  const app = buildApp({ config, db });
+
+  const purged = purgeEphemeral(db);
+  if (purged > 0) app.log.info(`启动清扫:删除 ${purged} 个临时会话`);
+
+  const sweep = setInterval(() => {
+    try {
+      const removed = purgeEphemeral(db);
+      if (removed > 0) app.log.info(`每日清扫:删除 ${removed} 个临时会话`);
+    } catch (error) {
+      app.log.error({ err: error }, '临时会话清扫失败');
+    }
+  }, EPHEMERAL_SWEEP_MS);
+  sweep.unref();
+
+  await app.listen({ port: config.port, host: config.host });
+
+  console.log('--------------------------------------------------');
+  console.log(`鲸灵服务器已启动  http://${config.host}:${config.port}`);
+  console.log(`模式              MOCK=${config.mock ? '1(假流,不调用真实 API)' : '0(真实 DeepSeek)'}`);
+  console.log(`一次性配对码      ${config.pairingCode}`);
+  console.log('配对              POST /v1/pair {"code":"<配对码>","device_name":"我的手机"}');
+  console.log('--------------------------------------------------');
+
+  const shutdown = async (signal: string): Promise<void> => {
+    app.log.info(`收到 ${signal},正在关闭`);
+    await app.close();
+    db.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+const entry = process.argv[1];
+if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+  main().catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
