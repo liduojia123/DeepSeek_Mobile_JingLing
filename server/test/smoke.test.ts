@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer, type ServerResponse } from 'node:http';
 import test from 'node:test';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/index.js';
@@ -38,6 +39,70 @@ async function pair(app: FastifyInstance): Promise<string> {
 }
 
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+
+// ---------- 伪造上游:验证真实 HTTP 客户端路径(断流、错误、上下文装配) ----------
+
+interface FakeRequest {
+  messages: Array<{ role: string; content: string }>;
+}
+
+interface FakeUpstream {
+  baseUrl: string;
+  requests: FakeRequest[];
+  close: () => Promise<void>;
+}
+
+async function startFakeUpstream(
+  responder: (body: FakeRequest, res: ServerResponse, index: number) => void,
+): Promise<FakeUpstream> {
+  const requests: FakeRequest[] = [];
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk: Buffer) => {
+      raw += chunk.toString('utf8');
+    });
+    req.on('end', () => {
+      const body = raw === '' ? { messages: [] } : (JSON.parse(raw) as FakeRequest);
+      requests.push(body);
+      responder(body, res, requests.length - 1);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    requests,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+const writeSse = (res: ServerResponse, chunks: string[]): void => {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  for (const chunk of chunks) res.write(`data: ${chunk}\n\n`);
+  res.end();
+};
+
+const happySse = (_body: FakeRequest, res: ServerResponse): void =>
+  writeSse(res, [
+    '{"choices":[{"delta":{"content":"好"}}]}',
+    '{"choices":[{"delta":{"content":"的"}}]}',
+    '{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}',
+    '[DONE]',
+  ]);
+
+function fakeHarness(fake: FakeUpstream): Harness {
+  return makeHarness({
+    mock: false,
+    deepseekApiKey: 'test-key',
+    deepseekBaseUrl: fake.baseUrl,
+    mockDelayMs: 0,
+  });
+}
 
 test('DeepSeek 流式 chunk 归一化为 DPAPP 增量', () => {
   assert.deepEqual(
@@ -402,4 +467,205 @@ test('stop:无进行中生成返回 409;不存在的会话返回 404', async (t)
     headers,
   });
   assert.equal(missing.statusCode, 404);
+});
+
+// ---------- 协议与失败路径回归 ----------
+
+interface TreeLikeNode {
+  id: string;
+  role: string;
+  blocks: Array<{ type?: string; text?: string }>;
+  children: TreeLikeNode[];
+}
+
+function findNode(nodes: TreeLikeNode[], id: string): TreeLikeNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const found = findNode(node.children, id);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function parseSseEvents(payload: string): Array<Record<string, unknown>> {
+  return payload
+    .split('\n\n')
+    .map((block) => block.trim())
+    .filter((block) => block !== '')
+    .map((block) => {
+      const dataLine = block.split('\n').find((line) => line.startsWith('data: '));
+      assert.ok(dataLine, `SSE 块缺少 data 行: ${block.slice(0, 80)}`);
+      return JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>;
+    });
+}
+
+test('发出的 SSE 每个事件都通过协议 schema 校验,且以 message_start 开头、message_end 收尾', async (t) => {
+  const { app } = makeHarness();
+  t.after(() => app.close());
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as {
+      id: string;
+    }
+  ).id;
+  const chat = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '校验事件' },
+    headers,
+  });
+
+  const events = parseSseEvents(chat.payload);
+  assert.ok(events.length > 3);
+  for (const event of events) {
+    const result = DpappEventSchema.safeParse(event);
+    assert.equal(result.success, true, `事件不合法: ${JSON.stringify(event)}`);
+  }
+  assert.equal(events[0].type, 'message_start');
+  assert.ok(typeof events[0].user_message_id === 'string', 'message_start 应带 user_message_id');
+  assert.equal(events.at(-1)?.type, 'message_end');
+});
+
+test('stop 在拿到任何内容前中断:空占位落库(消息不会消失),空回答不进下一轮上下文', async (t) => {
+  const fake = await startFakeUpstream((body, res, index) => {
+    if (index === 0) {
+      // 只回响应头、不吐事件:模型长时间思考期间用户点了 stop
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      return;
+    }
+    happySse(body, res);
+  });
+  const { app } = fakeHarness(fake);
+  t.after(async () => {
+    await app.close();
+    await fake.close();
+  });
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as {
+      id: string;
+    }
+  ).id;
+
+  const chatPromise = app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '你好' },
+    headers,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const stop = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/stop`,
+    headers,
+  });
+  assert.equal(stop.statusCode, 200);
+
+  const chat = await chatPromise;
+  assert.match(chat.payload, /"stop_reason":"interrupted"/);
+
+  const detail = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as { path: string[]; tree: TreeLikeNode[] };
+  assert.equal(detail.path.length, 2, '用户消息 + 空占位助手消息都应在活跃路径上,消息不能消失');
+  assert.equal(detail.tree.length, 1, '不应产生第二个根分支');
+  assert.equal(findNode(detail.tree, detail.path[1])?.role, 'assistant');
+
+  // 下一轮:空回答必须被过滤掉,否则部分 OpenAI 兼容实现会拒绝空 content
+  const second = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '接着聊' },
+    headers,
+  });
+  assert.equal(second.statusCode, 200);
+  const sentMessages = fake.requests[1]?.messages ?? [];
+  assert.ok(sentMessages.length >= 2, `上下文应至少含两轮用户消息,实际 ${sentMessages.length}`);
+  assert.equal(
+    sentMessages.some((message) => message.content === ''),
+    false,
+    '空助手消息不应发给模型',
+  );
+});
+
+test('上游中途断流:已收到的部分正文落库 + error 事件 + message_end(error)', async (t) => {
+  const fake = await startFakeUpstream((_body, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"content":"半句"}}]}\n\n');
+    setTimeout(() => res.destroy(), 20);
+  });
+  const { app } = fakeHarness(fake);
+  t.after(async () => {
+    await app.close();
+    await fake.close();
+  });
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as {
+      id: string;
+    }
+  ).id;
+
+  const chat = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '讲长一点' },
+    headers,
+  });
+
+  assert.match(chat.payload, /event: error/);
+  assert.match(chat.payload, /"stop_reason":"error"/);
+
+  const detail = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as { path: string[]; tree: TreeLikeNode[] };
+  assert.equal(detail.path.length, 2);
+  const assistant = findNode(detail.tree, detail.path[1]);
+  assert.equal(assistant?.blocks[0]?.text, '半句', '用户已经看到的文字不能丢');
+
+  const usage = (
+    await app.inject({ method: 'GET', url: '/v1/usage', headers })
+  ).json() as { totals: { calls: number; tokens_out: number } };
+  assert.equal(usage.totals.calls, 1, '中断也要记用量(估算值)');
+  assert.ok(usage.totals.tokens_out > 0);
+});
+
+test('设备令牌只存 sha256,库里没有明文', async (t) => {
+  const { app, db } = makeHarness();
+  t.after(() => app.close());
+  const token = await pair(app);
+
+  const row = db.prepare('SELECT token_hash FROM device LIMIT 1').get() as { token_hash: string };
+  assert.match(row.token_hash, /^[0-9a-f]{64}$/);
+  assert.notEqual(row.token_hash, token);
+});
+
+test('所有受保护路由都要求 Bearer 令牌', async (t) => {
+  const { app } = makeHarness();
+  t.after(() => app.close());
+  const headers = auth(await pair(app));
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as {
+      id: string;
+    }
+  ).id;
+
+  const protectedRoutes: Array<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; url: string }> = [
+    { method: 'GET', url: '/v1/conversations' },
+    { method: 'POST', url: '/v1/conversations' },
+    { method: 'GET', url: `/v1/conversations/${convId}` },
+    { method: 'PATCH', url: `/v1/conversations/${convId}` },
+    { method: 'DELETE', url: `/v1/conversations/${convId}` },
+    { method: 'POST', url: `/v1/conversations/${convId}/chat` },
+    { method: 'POST', url: `/v1/conversations/${convId}/stop` },
+    { method: 'GET', url: '/v1/usage' },
+  ];
+
+  for (const route of protectedRoutes) {
+    const response = await app.inject({ method: route.method, url: route.url });
+    assert.equal(response.statusCode, 401, `${route.method} ${route.url} 应要求令牌`);
+  }
 });

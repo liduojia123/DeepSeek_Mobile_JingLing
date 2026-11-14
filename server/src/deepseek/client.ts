@@ -9,9 +9,10 @@ export interface ChatMessage {
 export class UpstreamError extends Error {
   constructor(
     public readonly statusCode: number,
-    message: string,
+    /** 上游响应体原文。可能回显用户内容,只用于排障,不要写进日志。 */
+    public readonly detail: string,
   ) {
-    super(message);
+    super(`DeepSeek 上游返回 HTTP ${statusCode}`);
     this.name = 'UpstreamError';
   }
 }
@@ -49,7 +50,7 @@ export async function* streamChatCompletion(params: StreamChatParams): AsyncGene
 
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '');
-    throw new UpstreamError(response.status, detail.slice(0, 500) || 'DeepSeek 上游无响应体');
+    throw new UpstreamError(response.status, detail.slice(0, 500));
   }
 
   const reader = response.body.getReader();

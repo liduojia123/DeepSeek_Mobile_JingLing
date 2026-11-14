@@ -71,16 +71,40 @@ const ListQuery = z.object({
   include_ephemeral: z.enum(['0', '1']).optional(),
 });
 
-const DONE_EVENT_TYPES = new Set(['end_turn', 'interrupted', 'error']);
+/**
+ * 进行中的生成登记表。stop 端点、客户端断连、会话删除、进程关停都通过它中止,
+ * 保证每个 SSE 连接最终都会 finish(否则连接与 AbortController 永久泄漏)。
+ */
+export class GenerationRegistry {
+  private readonly active = new Map<string, AbortController>();
+
+  has(conversationId: string): boolean {
+    return this.active.has(conversationId);
+  }
+
+  add(conversationId: string, controller: AbortController): void {
+    this.active.set(conversationId, controller);
+  }
+
+  remove(conversationId: string): void {
+    this.active.delete(conversationId);
+  }
+
+  abort(conversationId: string): void {
+    this.active.get(conversationId)?.abort();
+  }
+
+  abortAll(): void {
+    for (const controller of this.active.values()) controller.abort();
+  }
+}
 
 export function registerConversationRoutes(
   app: FastifyInstance,
   ctx: { db: Db; config: Config },
+  registry: GenerationRegistry,
 ): void {
   const { db, config } = ctx;
-
-  /** 进行中的生成:conversation_id → AbortController(stop 端点与断连共用)。 */
-  const activeGenerations = new Map<string, AbortController>();
 
   app.get('/v1/conversations', async (request) => {
     const parsed = ListQuery.safeParse(request.query);
@@ -136,7 +160,7 @@ export function registerConversationRoutes(
   app.delete('/v1/conversations/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     getConversationOrThrow(db, id);
-    activeGenerations.get(id)?.abort();
+    registry.abort(id);
     db.prepare('DELETE FROM conversation WHERE id = ?').run(id);
     return reply.code(204).send();
   });
@@ -186,9 +210,8 @@ export function registerConversationRoutes(
   app.post('/v1/conversations/:id/stop', async (request) => {
     const { id } = request.params as { id: string };
     getConversationOrThrow(db, id);
-    const controller = activeGenerations.get(id);
-    if (!controller) throw new ApiError(409, 'not_generating', '当前没有进行中的生成');
-    controller.abort();
+    if (!registry.has(id)) throw new ApiError(409, 'not_generating', '当前没有进行中的生成');
+    registry.abort(id);
     return { stopped: true };
   });
 
@@ -208,7 +231,7 @@ export function registerConversationRoutes(
     const body = parsed.data;
     const regenerate = body.regenerate === true;
 
-    if (activeGenerations.has(conv.id)) {
+    if (registry.has(conv.id)) {
       throw new ApiError(409, 'generation_in_progress', '该会话已有进行中的生成,请先停止');
     }
 
@@ -257,7 +280,12 @@ export function registerConversationRoutes(
     const contextRows = activePath(allMessages(db, conv.id), assistantParentId);
     const messages: ChatMessage[] = contextRows
       .filter((row) => row.role === 'user' || row.role === 'assistant')
-      .map((row) => ({ role: row.role as 'user' | 'assistant', content: blocksToText(row.blocks_json) }));
+      .map((row) => ({
+        role: row.role as 'user' | 'assistant',
+        content: blocksToText(row.blocks_json),
+      }))
+      // 中断/失败留下的空助手消息不进上下文:部分 OpenAI 兼容实现会拒绝空 content
+      .filter((message) => message.content !== '');
 
     // 2) 开流
     reply.hijack();
@@ -271,45 +299,60 @@ export function registerConversationRoutes(
 
     const assistantId = randomUUID();
     const controller = new AbortController();
-    activeGenerations.set(conv.id, controller);
+    registry.add(conv.id, controller);
 
     let finished = false;
     raw.on('close', () => {
       if (!finished) controller.abort();
     });
+    raw.on('error', () => {
+      if (!finished) controller.abort();
+    });
 
     const writeEvent = (event: DpappEvent): void => {
-      if (raw.writableEnded) return;
+      if (raw.destroyed || raw.writableEnded) return;
       raw.write(encodeSse(event));
     };
 
     // 心跳注释行:避免思考阶段长时间无字节被中间层判定空闲超时
     const heartbeat = setInterval(() => {
-      if (!raw.writableEnded) raw.write(': ping\n\n');
+      if (!raw.destroyed && !raw.writableEnded) raw.write(': ping\n\n');
     }, 15_000);
     heartbeat.unref();
 
     const finish = (): void => {
       clearInterval(heartbeat);
-      activeGenerations.delete(conv.id);
+      registry.remove(conv.id);
       finished = true;
       if (!raw.writableEnded) raw.end();
     };
 
-    writeEvent({ type: 'message_start', message_id: assistantId, model: config.model });
+    writeEvent({
+      type: 'message_start',
+      message_id: assistantId,
+      user_message_id: userMessageId,
+      model: config.model,
+    });
 
-    let result;
+    let result: Awaited<ReturnType<typeof runAgentTurn>>;
     try {
       result = await runAgentTurn({ config, messages, signal: controller.signal, emit: writeEvent });
     } catch (error) {
       app.log.error({ err: error }, 'agent turn failed');
-      writeEvent({ type: 'error', code: 'upstream_error', message: '模型服务暂时不可用,请稍后重试' });
-      finish();
-      return reply;
+      result = {
+        thinking: '',
+        text: '',
+        tokensIn: 0,
+        tokensOut: 0,
+        cost: 0,
+        stopReason: 'error',
+        errorMessage: '模型服务暂时不可用,请稍后重试',
+      };
     }
 
     // 3) 一次性落库助手消息 + 用量,再发 message_end。
-    // 收尾放在 finally:生成期间会话被删除时(落库会撞外键约束)也不能漏掉 finish,否则 SSE 连接悬着。
+    // 无论有没有内容都落库并推进 active_leaf:否则用户消息会成为不在展示路径上的悬挂节点,
+    // 客户端刷新后「消息消失」。收尾放 finally,任何异常都不能漏掉 finish。
     try {
       const stillExists = db.prepare('SELECT 1 AS ok FROM conversation WHERE id = ?').get(conv.id);
       if (!stillExists) {
@@ -319,8 +362,16 @@ export function registerConversationRoutes(
           message: '会话已被删除,本轮回答不再保存',
         });
       } else {
-        const hasContent = result.text !== '' || result.thinking !== '';
-        if (hasContent) {
+        if (result.stopReason === 'error') {
+          writeEvent({
+            type: 'error',
+            code: 'upstream_error',
+            message: result.errorMessage ?? '模型服务暂时不可用,请稍后重试',
+          });
+        }
+
+        // 回答、active_leaf、标题、用量必须原子写入,否则崩溃会留下不在路径上的孤儿消息
+        db.transaction(() => {
           insertMessage(db, {
             id: assistantId,
             conversationId: conv.id,
@@ -333,42 +384,41 @@ export function registerConversationRoutes(
             cost: result.cost,
             stopReason: result.stopReason,
           });
-          db.prepare(
-            'UPDATE conversation SET active_leaf_id = ?, updated_at = ? WHERE id = ?',
-          ).run(assistantId, nowIso(), conv.id);
-        }
-
-        if (userMessageId !== null && conv.title.trim() === '') {
-          db.prepare('UPDATE conversation SET title = ? WHERE id = ?').run(
-            userContent.replace(/\s+/g, ' ').slice(0, 30),
-            conv.id,
-          );
-        }
-
-        // 中断在拿到 usage 之前发生时不会有 token 数,这种空账不记
-        if (result.tokensIn + result.tokensOut > 0) {
-          db.prepare(
-            `INSERT INTO usage_log (id, ts, kind, quantity, cost, tokens_in, tokens_out, conversation_id, message_id)
-             VALUES (?, ?, 'model', ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            randomUUID(),
+          db.prepare('UPDATE conversation SET active_leaf_id = ?, updated_at = ? WHERE id = ?').run(
+            assistantId,
             nowIso(),
-            result.tokensIn + result.tokensOut,
-            result.cost,
-            result.tokensIn,
-            result.tokensOut,
             conv.id,
-            hasContent ? assistantId : null,
           );
-        }
+
+          if (userMessageId !== null && conv.title.trim() === '') {
+            db.prepare('UPDATE conversation SET title = ? WHERE id = ?').run(
+              userContent.replace(/\s+/g, ' ').slice(0, 30),
+              conv.id,
+            );
+          }
+
+          if (result.tokensIn + result.tokensOut > 0) {
+            db.prepare(
+              `INSERT INTO usage_log (id, ts, kind, quantity, cost, tokens_in, tokens_out, conversation_id, message_id)
+               VALUES (?, ?, 'model', ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              randomUUID(),
+              nowIso(),
+              result.tokensIn + result.tokensOut,
+              result.cost,
+              result.tokensIn,
+              result.tokensOut,
+              conv.id,
+              assistantId,
+            );
+          }
+        })();
 
         writeEvent({
           type: 'message_end',
           usage: { tokens_in: result.tokensIn, tokens_out: result.tokensOut },
           cost_estimate: Number(result.cost.toFixed(6)),
-          stop_reason: DONE_EVENT_TYPES.has(result.stopReason)
-            ? (result.stopReason as 'end_turn' | 'interrupted' | 'error')
-            : 'end_turn',
+          stop_reason: result.stopReason,
         });
       }
     } catch (error) {
@@ -437,7 +487,10 @@ function getMessage(db: Db, conversationId: string, messageId: string): MessageR
 
 function allMessages(db: Db, conversationId: string): MessageRow[] {
   return db
-    .prepare('SELECT * FROM message WHERE conversation_id = ? ORDER BY created_at ASC')
+    .prepare(
+      // rowid 作次级键:同一毫秒创建的兄弟分支排序才不会跳动
+      'SELECT * FROM message WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC',
+    )
     .all(conversationId) as MessageRow[];
 }
 

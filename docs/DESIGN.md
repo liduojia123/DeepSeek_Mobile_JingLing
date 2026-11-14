@@ -168,21 +168,30 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 由此:`{content, parent_message_id:<被编辑用户消息的父节点>}` = 编辑重发(产生兄弟用户分支);
 `{regenerate:true, parent_message_id:<该用户消息 id>}` = 重新生成(在该用户消息下产生兄弟助手分支)。
 
-**SSE 事件协议**(客户端唯一需要理解的格式,对 DeepSeek 原生事件归一化):
+**SSE 事件协议**(客户端唯一需要理解的格式,对 DeepSeek 原生事件归一化;M0 已冻结,M1 逐字段镜像):
 
 ```
-event: message_start     {message_id, model}
+event: message_start     {message_id, user_message_id, model}   # user_message_id:重新生成时为 null
 event: thinking_delta    {text}
 event: thinking_end
 event: tool_progress     {tool:"web_search", phase:"searching"|"reading", query?}
-event: tool_result       {tool, summary, results:[{title,url,site}...]}
+event: tool_result       {tool, summary, results:[{title,url,site?}...]}
 event: text_delta        {text}
 event: citation          {index, url, title}
-event: file_attached     {file_id, name, status}
+event: file_attached     {file_id, name, status}                # status: pending|parsed|failed
 event: safety_block      {reason}
-event: message_end       {usage:{tokens_in,out}, cost_estimate, stop_reason}   # stop_reason: end_turn|interrupted
+event: message_end       {usage:{tokens_in,out}, cost_estimate, stop_reason}
 event: error             {code, message}
 ```
+
+线上编码约定(M1 解析必须按此实现):
+
+- 每行格式 `event: <type>` + `data: <JSON>`,块以空行分隔;**`data` 的 JSON 里也带 `type` 字段**,两份信息一致,客户端可用任一解析。
+- 服务端每 15s 发一行注释 `: ping`,**客户端必须忽略以 `:` 开头的行**(SSE 规范注释,不是数据)。
+- **`message_end` 永远是流的终止事件**;`error` 只表示"本轮失败",其后仍会收到 `message_end`(`stop_reason:"error"`),客户端不用把 `error` 当终止信号。
+- `stop_reason` 取值:`end_turn`(正常)/ `interrupted`(用户 stop 或客户端断连)/ `error`(上游失败或超时)。
+- **失败/中断也会落库**:服务端会把已收到的部分内容(可能为空)存成一条 assistant 消息并推进 `active_leaf_id`,所以客户端收到 `error`/`interrupted` 后刷新会话一定能看到当轮用户消息,不会"消失";空正文的 assistant 消息在组装下一轮上下文时会被服务端过滤掉。
+- 中断或上游失败时拿不到真实 usage,`usage` 与 `cost_estimate` 是按字符数估算值(用于用量看板,不用于计费对账)。
 
 **dsh 桥接端点(M3 落地,协议在 spike 后定稿,预留)**:
 
@@ -290,6 +299,8 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-14 | 产品命名:**鲸灵(JingLing)**,包名 `com.jingling`,Flutter 项目名 `jingling`;目录代号 DPAPP 保留 |
 | 2026-11-14 | **M0 完成**:server 骨架(Fastify 5 + better-sqlite3 + zod 4 + TS strict)、配对认证(设备令牌只存 sha256、配对码成功即轮换)、会话 CRUD + 消息树/分支模型、DeepSeek 适配层(client/events/mock)、SSE `chat`(普通/编辑重发/重新生成)+ `stop`、按天用量。`npm test` 9/9 通过;MOCK=1 真实进程 curl 全流程(配对→分支→切叶子→重新生成→stop 中断→断连恢复→临时会话清扫)验证通过。**真实 key 复测(DoD 第 2 项)待用户提供 `DEEPSEEK_API_KEY`** |
 | 2026-11-14 | M0 实现决策:`usage_log` 增加 `tokens_in/tokens_out/conversation_id/message_id`(在 §5.2 基础上扩展),否则 F9 无法按天/按会话拆分 token;token 单价放 env(`PRICE_IN/OUT_CNY_PER_MTOK`,默认 0.5/2.0 元每百万,**需按官方公告核定**);一次性配对码轮换状态仅在内存,重启即换新码并打印;预算熔断字段只读取不启用(M5 开启) |
+| 2026-11-14 | M0 代码审查后定稿(修复 Critical/Important):①失败/中断也落 assistant 消息(可能空正文)并推进 `active_leaf_id`,杜绝"用户消息不在展示路径上";②助手落库+active_leaf+标题+用量放进同一 SQLite 事务;③加 `UPSTREAM_TIMEOUT_MS`(默认 120s)防止会话永久卡在 generating;④空正文 assistant 不进下一轮上下文;⑤关停时先 abort 在途生成再 close,Docker stop 不再卡死;⑥§5.1 协议冻结(message_start 增加 `user_message_id`、`stop_reason` 三值、`message_end` 为唯一终止事件、data 含 `type`、心跳注释行) |
+| 2026-11-14 | M0 遗留项(进 M1/backlog,非阻塞):消息删除服务端接口(`DELETE /v1/conversations/{id}/messages/{mid}`,约定删子树且 `active_leaf` 落在删除点父节点)——M1 长按"删除"必须先有此接口;会话列表 preview 目前 N+1 查询(个人量级可接受);`/v1/pair` 无速率限制、无令牌吊销接口;`/v1/usage` 按 UTC 日分桶 |
 
 **当前状态**:M0 已交付(见 §10,2026-11-14),真实 key 复测待补。下一步 M1 客户端核心,按 `docs/HANDOFF-M0-M1.md` §M1 执行。
 

@@ -10,6 +10,8 @@ import { z } from 'zod';
 export const MessageStartEvent = z.object({
   type: z.literal('message_start'),
   message_id: z.string().min(1),
+  /** 本轮对应的用户消息 id(重新生成时为 null);编辑重发/失败对账需要 */
+  user_message_id: z.string().min(1).nullable(),
   model: z.string().min(1),
 });
 

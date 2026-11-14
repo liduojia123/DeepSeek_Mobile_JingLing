@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { ApiError, PairingService, makeAuthGuard, registerPairingRoute } from './auth.js';
 import { loadConfig, loadDotEnv, type Config } from './config.js';
 import { openDb, purgeEphemeral, type Db } from './db.js';
-import { registerConversationRoutes } from './routes/conversations.js';
+import { registerConversationRoutes, GenerationRegistry } from './routes/conversations.js';
 import { registerUsageRoutes } from './routes/usage.js';
 
 export interface AppContext {
@@ -14,7 +14,10 @@ export interface AppContext {
 const EPHEMERAL_SWEEP_MS = 24 * 60 * 60 * 1000;
 
 /** 构造 Fastify 实例但不 listen —— 测试用 app.inject 直接打路由。 */
-export function buildApp(ctx: AppContext): FastifyInstance {
+export function buildApp(
+  ctx: AppContext,
+  registry: GenerationRegistry = new GenerationRegistry(),
+): FastifyInstance {
   const { config, db } = ctx;
 
   const app = Fastify({
@@ -69,7 +72,7 @@ export function buildApp(ctx: AppContext): FastifyInstance {
   // 除 /health 与 /v1/pair 外的所有路由都要 Bearer 设备令牌
   app.register(async (secured) => {
     secured.addHook('preHandler', makeAuthGuard(db));
-    registerConversationRoutes(secured, ctx);
+    registerConversationRoutes(secured, ctx, registry);
     registerUsageRoutes(secured, ctx);
   });
 
@@ -80,7 +83,8 @@ async function main(): Promise<void> {
   loadDotEnv();
   const config = loadConfig();
   const db = openDb(config.dbPath);
-  const app = buildApp({ config, db });
+  const registry = new GenerationRegistry();
+  const app = buildApp({ config, db }, registry);
 
   const purged = purgeEphemeral(db);
   if (purged > 0) app.log.info(`启动清扫:删除 ${purged} 个临时会话`);
@@ -106,9 +110,17 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`收到 ${signal},正在关闭`);
-    await app.close();
-    db.close();
-    process.exit(0);
+    // 先中止所有在途生成:否则 open SSE 会让 server.close() 一直挂着,Docker 只能 SIGKILL
+    registry.abortAll();
+    try {
+      await Promise.race([
+        app.close(),
+        new Promise((resolve) => setTimeout(resolve, 3000).unref()),
+      ]);
+    } finally {
+      db.close();
+      process.exit(0);
+    }
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));

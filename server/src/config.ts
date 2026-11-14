@@ -19,6 +19,8 @@ export interface Config {
   dailyBudgetCny: number;
   maxContentChars: number;
   maxToolLoops: number;
+  /** 上游流式响应空闲超时:超过即放弃本轮,避免会话永久卡在 generating */
+  upstreamTimeoutMs: number;
   logRequests: boolean;
 }
 
@@ -36,6 +38,7 @@ const EnvSchema = z.object({
   PRICE_OUT_CNY_PER_MTOK: z.string().optional(),
   DAILY_BUDGET_CNY: z.string().optional(),
   MAX_CONTENT_CHARS: z.string().optional(),
+  UPSTREAM_TIMEOUT_MS: z.string().optional(),
   LOG_REQUESTS: z.string().optional(),
 });
 
@@ -78,7 +81,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dailyBudgetCny: num(e.DAILY_BUDGET_CNY, 20),
     maxContentChars: num(e.MAX_CONTENT_CHARS, 100_000),
     maxToolLoops: 10,
-    logRequests: true,
+    upstreamTimeoutMs: num(e.UPSTREAM_TIMEOUT_MS, 120_000),
+    logRequests: e.LOG_REQUESTS?.trim() === '' || e.LOG_REQUESTS === undefined ? true : isOn(e.LOG_REQUESTS),
   };
   if (!config.mock && config.deepseekApiKey === '') {
     throw new Error('未配置 DEEPSEEK_API_KEY。开发阶段请设 MOCK=1,或把 key 写入 server/.env');
