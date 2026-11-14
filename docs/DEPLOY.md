@@ -12,8 +12,10 @@
 ```
 
 - **为什么是 8000**:域名备案未下,80/443 被 DNSPod 拦截,Caddy 配置了 `https_port 8000`(与 spendlens 共用)。备案通过后删掉 `https_port` 即可回到标准 443。
-- 鲸灵对外地址:`https://ling.example.com:8000`
-- 证书:Caddy + Let's Encrypt 自动签发(TLS-ALPN-01 走 8000),无需手工维护。
+- **对外地址:`https://www.example.com:8000/jingling`**(复用 www 的既有证书,`handle_path /jingling/*` 剥前缀转发到 3001)。
+- **为什么不是子域名**:ACME 证书校验只走标准端口 —— TLS-ALPN-01 连 443、HTTP-01 连 80,两个端口都被未备案拦截,所以 `ling.example.com` 签不出证书(spendlens 的证书是拦截生效前签发的)。8000 端口只能"用"证书,不能"签"证书。
+- 备案通过后(或给 Caddy 装 DNSPod DNS-01 插件拿到 DNS API token)再切回子域名,客户端只需改服务器地址。
+- 证书:Caddy + Let's Encrypt 自动续期,无需手工维护。
 
 ## 首次部署(已完成,留档)
 
@@ -34,15 +36,20 @@ sudo docker compose up -d --build
 Caddy 站点(`/etc/caddy/Caddyfile`):
 
 ```
-ling.example.com {
-	reverse_proxy 127.0.0.1:3001 {
-		flush_interval -1     # SSE 必须关缓冲
+www.example.com {
+	handle_path /jingling/* {
+		reverse_proxy 127.0.0.1:3001 {
+			flush_interval -1     # SSE 必须关缓冲
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8080   # spendlens
 	}
 }
 ```
 
 改完 `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sudo systemctl reload caddy`。
-DNS:`ling.example.com A 124.221.242.55`(DNSPod);`www` 已解析,加子域即可。
+DNS:`www.example.com` 已解析到本机;当前不需要新增记录(备案后再加 `ling`)。
 
 ## 日常运维
 
@@ -89,7 +96,7 @@ db.exec(\"VACUUM INTO '/app/data/backup-'+Date.now()+'.db'\");"
 
 | 现象 | 排查 |
 |---|---|
-| 手机连不上 | `curl -sS https://ling.example.com:8000/health`;先看 Caddy 日志有没有证书错误(DNS 没生效时是 `no such host`) |
+| 手机连不上 | `curl -sS https://www.example.com:8000/jingling/health`;先看 Caddy 日志有没有证书错误(DNS 没生效时是 `no such host`) |
 | 流式卡住不更新 | Caddy 少了 `flush_interval -1`;或链路中间代理缓冲了 SSE |
 | 容器 unhealthy | `sudo docker logs jingling-jingling-1`;看是否 `EADDRINUSE` 或 env 缺失 |
 | 配对码无效 | 重启过容器会换码;用上面 `grep 配对码` 取最新 |
