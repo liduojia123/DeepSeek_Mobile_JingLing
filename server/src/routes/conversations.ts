@@ -308,61 +308,75 @@ export function registerConversationRoutes(
       return reply;
     }
 
-    // 3) 一次性落库助手消息 + 用量,再发 message_end
-    const hasContent = result.text !== '' || result.thinking !== '';
-    if (hasContent) {
-      insertMessage(db, {
-        id: assistantId,
-        conversationId: conv.id,
-        parentId: assistantParentId,
-        role: 'assistant',
-        blocks: [{ type: 'text', text: result.text }],
-        thinking: result.thinking,
-        tokensIn: result.tokensIn,
-        tokensOut: result.tokensOut,
-        cost: result.cost,
-        stopReason: result.stopReason,
-      });
-      db.prepare('UPDATE conversation SET active_leaf_id = ?, updated_at = ? WHERE id = ?').run(
-        assistantId,
-        nowIso(),
-        conv.id,
-      );
-    }
+    // 3) 一次性落库助手消息 + 用量,再发 message_end。
+    // 收尾放在 finally:生成期间会话被删除时(落库会撞外键约束)也不能漏掉 finish,否则 SSE 连接悬着。
+    try {
+      const stillExists = db.prepare('SELECT 1 AS ok FROM conversation WHERE id = ?').get(conv.id);
+      if (!stillExists) {
+        writeEvent({
+          type: 'error',
+          code: 'conversation_deleted',
+          message: '会话已被删除,本轮回答不再保存',
+        });
+      } else {
+        const hasContent = result.text !== '' || result.thinking !== '';
+        if (hasContent) {
+          insertMessage(db, {
+            id: assistantId,
+            conversationId: conv.id,
+            parentId: assistantParentId,
+            role: 'assistant',
+            blocks: [{ type: 'text', text: result.text }],
+            thinking: result.thinking,
+            tokensIn: result.tokensIn,
+            tokensOut: result.tokensOut,
+            cost: result.cost,
+            stopReason: result.stopReason,
+          });
+          db.prepare(
+            'UPDATE conversation SET active_leaf_id = ?, updated_at = ? WHERE id = ?',
+          ).run(assistantId, nowIso(), conv.id);
+        }
 
-    if (userMessageId !== null && conv.title.trim() === '') {
-      db.prepare('UPDATE conversation SET title = ? WHERE id = ?').run(
-        userContent.replace(/\s+/g, ' ').slice(0, 30),
-        conv.id,
-      );
-    }
+        if (userMessageId !== null && conv.title.trim() === '') {
+          db.prepare('UPDATE conversation SET title = ? WHERE id = ?').run(
+            userContent.replace(/\s+/g, ' ').slice(0, 30),
+            conv.id,
+          );
+        }
 
-    // 中断在拿到 usage 之前发生时不会有 token 数,这种空账不记
-    if (result.tokensIn + result.tokensOut > 0) {
-      db.prepare(
-        `INSERT INTO usage_log (id, ts, kind, quantity, cost, tokens_in, tokens_out, conversation_id, message_id)
-         VALUES (?, ?, 'model', ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        randomUUID(),
-        nowIso(),
-        result.tokensIn + result.tokensOut,
-        result.cost,
-        result.tokensIn,
-        result.tokensOut,
-        conv.id,
-        hasContent ? assistantId : null,
-      );
-    }
+        // 中断在拿到 usage 之前发生时不会有 token 数,这种空账不记
+        if (result.tokensIn + result.tokensOut > 0) {
+          db.prepare(
+            `INSERT INTO usage_log (id, ts, kind, quantity, cost, tokens_in, tokens_out, conversation_id, message_id)
+             VALUES (?, ?, 'model', ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            randomUUID(),
+            nowIso(),
+            result.tokensIn + result.tokensOut,
+            result.cost,
+            result.tokensIn,
+            result.tokensOut,
+            conv.id,
+            hasContent ? assistantId : null,
+          );
+        }
 
-    writeEvent({
-      type: 'message_end',
-      usage: { tokens_in: result.tokensIn, tokens_out: result.tokensOut },
-      cost_estimate: Number(result.cost.toFixed(6)),
-      stop_reason: DONE_EVENT_TYPES.has(result.stopReason)
-        ? (result.stopReason as 'end_turn' | 'interrupted' | 'error')
-        : 'end_turn',
-    });
-    finish();
+        writeEvent({
+          type: 'message_end',
+          usage: { tokens_in: result.tokensIn, tokens_out: result.tokensOut },
+          cost_estimate: Number(result.cost.toFixed(6)),
+          stop_reason: DONE_EVENT_TYPES.has(result.stopReason)
+            ? (result.stopReason as 'end_turn' | 'interrupted' | 'error')
+            : 'end_turn',
+        });
+      }
+    } catch (error) {
+      app.log.error({ err: error }, '回答落库失败');
+      writeEvent({ type: 'error', code: 'persist_failed', message: '回答保存失败' });
+    } finally {
+      finish();
+    }
     return reply;
   });
 }

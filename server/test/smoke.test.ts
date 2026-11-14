@@ -343,6 +343,41 @@ test('框架客户端错误透出原状态码:不支持的 Content-Type 是 415 
   assert.equal((response.json() as { error: { code: string } }).error.code, 'FST_ERR_CTP_INVALID_MEDIA_TYPE');
 });
 
+test('生成过程中删除会话:SSE 正常收尾,不泄漏连接也不落坏数据', async (t) => {
+  const { app } = makeHarness({ mockDelayMs: 50 });
+  t.after(() => app.close());
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as {
+      id: string;
+    }
+  ).id;
+
+  const chatPromise = app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '慢慢回答' },
+    headers,
+  });
+  // 让生成进入流式阶段后再删会话
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  const deleted = await app.inject({
+    method: 'DELETE',
+    url: `/v1/conversations/${convId}`,
+    headers,
+  });
+  assert.equal(deleted.statusCode, 204);
+
+  const chat = await chatPromise;
+  assert.equal(chat.statusCode, 200, '流仍应正常收尾');
+  assert.match(chat.payload, /event: (message_end|error)/, '断流必须有终止事件');
+
+  const gone = await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers });
+  assert.equal(gone.statusCode, 404);
+});
+
 test('stop:无进行中生成返回 409;不存在的会话返回 404', async (t) => {
   const { app } = makeHarness();
   t.after(() => app.close());
