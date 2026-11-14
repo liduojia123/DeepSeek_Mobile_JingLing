@@ -277,7 +277,7 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 |---|---|---|---|
 | M0 后端骨架 | 服务部署、配对认证、DeepSeek 适配层、SSE 事件协议、会话+分支存储 | curl 走通流式对话与分支 | HANDOFF §M0 |
 | M1 客户端核心 | Flutter 四页、流式渲染、分支 UI、基础操作包 | 真机/Chrome 全流程 | HANDOFF §M1 |
-| M2 搜索与文件 | 搜索过程卡片、引用、文件上传解析 | 带 URL 能读网页;传 PDF 能答 | 届时另出 |
+| M2 搜索与文件 | 搜索过程卡片、引用、文件上传解析 | 带 URL 能读网页;传 PDF 能答 | `docs/HANDOFF-M2.md`(已出) |
 | M3 dsh 远程开发桥 | spike→插件→服务器中继→电脑页 | 手机派任务+批准工具调用,任务完成 | §4.4 + 届时另出 |
 | M4 语音闭环 | ASR/TTS 管道、录音 UI、播放打断、长按朗读 | 全程语音完成一轮问答 | 届时另出 |
 | M5 工具与用量 | memory + http_request + 预算熔断 + 用量看板 | "记住我用 XX,下次直接用"生效 | 届时另出 |
@@ -306,8 +306,10 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-14 | **真实 API 实测结论**(替换文档假设):`model=deepseek-flash` 可用;请求参数 `thinking:{"type":"enabled"}` 与 `stream_options:{"include_usage":true}` 均被接受、不报错;思考内容确实以 `reasoning_content` 增量返回(一次回答 116 个 thinking_delta);`usage` 在末尾 chunk 真实回传。**token 单价仍是占位值**(0.5/2.0 元每百万),估算费用不可用于对账,需按官方公告价更新 env |
 | 2026-11-14 | M1 实现决策:①CORS 从「跟随 MOCK」改为独立 `DEV_CORS` 开关(默认跟随 MOCK),因为用真实 key 时也要 `flutter run -d chrome`,而生产必须为 0;②SSE 端点用 `reply.hijack()` 后 Fastify 的 CORS 头不会自动写入,已显式补上(`src/cors.ts`),否则浏览器整条流被拦(Failed to fetch);③客户端协议层用 `package:http` 流式解析,服务端每 15s 的心跳注释行必须忽略;④`flutter_markdown` 的 `selectable` 会吞掉长按手势,助手消息改为不可选文本 + 显式 `⋯` 菜单按钮兜底 |
 | 2026-11-14 | M1 已知限制:Flutter **Web** 上长按助手正文偶发不触发(桌面浏览器合成指针事件差异),已提供 `⋯` 按钮作为等价入口,真机上需复测长按;**APK 需真机安装验证**(本机无连接设备);`server/.env` 与仓库根的 `apikey.md` 已加入 `.gitignore`,密钥只允许留在本机 |
+| 2026-11-14 | **M1 真机验证通过**:小米 24129PN74C / Android 15 / HyperOS,`adb reverse` 把手机 `localhost:3000` 映射到电脑服务端,debug APK 安装后完成 配对 → 多轮真实对话(「你是谁」「你可以做什么」)→ 临时会话;服务端 `device.last_seen` 与消息均正确落库。注:小米需在开发者选项打开「USB 安装」,`adb shell input` 另需「USB 调试(安全设置)」 |
+| 2026-11-14 | **M2 施工单已出**(`docs/HANDOFF-M2.md`),并**用真实 key 抓包确认了 Chat Completions 下的联网/文件接口形态**(非文档推测):`tools:[{type,name}]`、`safety_check:{level}`、`title:{enabled}` 均可用;新增流式字段 `delta.annotations[].url_citation{url,title,start_index,end_index}`、`delta.server_tool_calls[{index,reasoning_content,calls[{id,type,kind,action,status,sources[]}]}]`、`delta.title`、`choices[0].server_tool_event{type,step}`;`usage` 增加 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens/safety_tokens`、`server_tool_use{tool_search,tool_fetch,tool_image_search}`;`finish_reason` 为 `stop`。文件走 `POST /files`(`purpose` 必须在 `file` 之前)→ 对话里用 `{type:"document",source:{type:"file",file_id}}` 引用 |
 
-**当前状态**:M0 + M1 已交付(见 §10,2026-11-14),真实 DeepSeek key 已验证。下一步 M2(搜索/文件),需先出 M2 施工单。
+**当前状态**:M0 + M1 已交付并真机验证;M2 施工单已出、待开工(先做单内 4 条 spike)。
 
 ## 11. 参考资料
 
