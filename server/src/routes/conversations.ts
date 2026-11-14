@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { runAgentTurn } from '../agent/loop.js';
 import { ApiError } from '../auth.js';
 import type { Config } from '../config.js';
+import { DEV_CORS_HEADERS } from '../cors.js';
 import { nowIso, type Db } from '../db.js';
 import type { ChatMessage } from '../deepseek/client.js';
 import { encodeSse, type DpappEvent } from '../deepseek/events.js';
@@ -216,6 +217,34 @@ export function registerConversationRoutes(
   });
 
   /**
+   * 删除一条消息及其整个子树(分支点删除 = 丢弃该分支)。
+   * 若被删子树包含 active_leaf_id,活跃叶子回退到被删节点的父节点。
+   */
+  app.delete('/v1/conversations/:id/messages/:messageId', async (request, reply) => {
+    const { id, messageId } = request.params as { id: string; messageId: string };
+    const conv = getConversationOrThrow(db, id);
+    const target = getMessage(db, conv.id, messageId);
+    if (!target) throw new ApiError(404, 'message_not_found', '消息不存在');
+    if (registry.has(conv.id)) {
+      throw new ApiError(409, 'generation_in_progress', '生成中不能删除消息,请先停止');
+    }
+
+    db.transaction(() => {
+      const ids = collectSubtree(db, conv.id, messageId);
+      const remove = db.prepare('DELETE FROM message WHERE id = ?');
+      for (const mid of ids) remove.run(mid);
+
+      const leafLost =
+        conv.active_leaf_id !== null && ids.some((mid) => mid === conv.active_leaf_id);
+      db.prepare(
+        `UPDATE conversation SET active_leaf_id = ?, updated_at = ? WHERE id = ?`,
+      ).run(leafLost ? target.parent_id : conv.active_leaf_id, nowIso(), conv.id);
+    })();
+
+    return reply.code(204).send();
+  });
+
+  /**
    * 核心 SSE 端点,三种入参共用:
    *  - 普通发送        {content}                          → 挂在 active_leaf_id 下
    *  - 编辑重发        {content, parent_message_id}        → 在指定父节点下新建兄弟用户分支
@@ -295,6 +324,8 @@ export function registerConversationRoutes(
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
+      // hijack 之后 Fastify 的 CORS 钩子头不会再被写入,开发期必须自己带上
+      ...(config.devCors ? DEV_CORS_HEADERS : {}),
     });
 
     const assistantId = randomUUID();
@@ -494,6 +525,26 @@ function allMessages(db: Db, conversationId: string): MessageRow[] {
     .all(conversationId) as MessageRow[];
 }
 
+/** 删除分支点时要连同整棵子树一起删,这里收集含自身在内的全部后代 id。 */
+function collectSubtree(db: Db, conversationId: string, rootId: string): string[] {
+  const childrenOf = new Map<string, string[]>();
+  for (const row of allMessages(db, conversationId)) {
+    if (row.parent_id === null) continue;
+    const siblings = childrenOf.get(row.parent_id) ?? [];
+    siblings.push(row.id);
+    childrenOf.set(row.parent_id, siblings);
+  }
+  const ids: string[] = [];
+  const stack: string[] = [rootId];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === undefined) break;
+    ids.push(current);
+    stack.push(...(childrenOf.get(current) ?? []));
+  }
+  return ids;
+}
+
 function parseJson<T>(raw: string, fallback: T): T {
   try {
     return JSON.parse(raw) as T;
@@ -510,8 +561,7 @@ function blocksToText(blocksJson: string): string {
     .join('');
 }
 
-/** 从叶子沿 parent 回溯,得到根→叶的展示路径。 */
-function activePath(rows: MessageRow[], leafId: string | null): MessageRow[] {
+/** 从叶子沿 parent 回溯,得到根→叶的展示路径。 */function activePath(rows: MessageRow[], leafId: string | null): MessageRow[] {
   if (leafId === null) return [];
   const byId = new Map(rows.map((row) => [row.id, row]));
   const path: MessageRow[] = [];

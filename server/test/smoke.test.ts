@@ -643,6 +643,101 @@ test('设备令牌只存 sha256,库里没有明文', async (t) => {
   assert.notEqual(row.token_hash, token);
 });
 
+test('删除消息:删掉助手分支后 active_leaf 回退,子树整体消失', async (t) => {
+  const { app } = makeHarness();
+  t.after(() => app.close());
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as {
+      id: string;
+    }
+  ).id;
+
+  await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '第一问' },
+    headers,
+  });
+  let detail = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as { path: string[]; active_leaf_id: string | null };
+  const userId = detail.path[0];
+  const assistantId = detail.path[1];
+
+  // 重新生成制造兄弟分支,再删掉当前活跃的那个助手分支
+  await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { regenerate: true, parent_message_id: userId },
+    headers,
+  });
+  const siblings = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as { path: string[]; tree: Array<{ children: TreeLikeNode[] }> };
+  assert.equal(siblings.tree[0].children.length, 2);
+  const activeAssistantId = siblings.path[1];
+  assert.notEqual(activeAssistantId, assistantId);
+
+  const deleted = await app.inject({
+    method: 'DELETE',
+    url: `/v1/conversations/${convId}/messages/${activeAssistantId}`,
+    headers,
+  });
+  assert.equal(deleted.statusCode, 204);
+
+  detail = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as typeof detail;
+  assert.deepEqual(detail.path, [userId], '删掉活跃助手分支后应回退到用户消息');
+  assert.equal(detail.active_leaf_id, userId);
+
+  // 旧兄弟分支仍在
+  const afterDelete = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as { tree: Array<{ children: TreeLikeNode[] }> };
+  assert.equal(afterDelete.tree[0].children.length, 1);
+
+  const missing = await app.inject({
+    method: 'DELETE',
+    url: `/v1/conversations/${convId}/messages/${activeAssistantId}`,
+    headers,
+  });
+  assert.equal(missing.statusCode, 404);
+});
+
+test('dev CORS:SSE 响应在 hijack 后仍带 Access-Control-Allow-Origin;非 dev 不带', async (t) => {
+  const mockHarness = makeHarness();
+  const mockHeaders = auth(await pair(mockHarness.app));
+  const mockConv = (
+    (await mockHarness.app.inject({
+      method: 'POST',
+      url: '/v1/conversations',
+      payload: {},
+      headers: mockHeaders,
+    })).json() as { id: string }
+  ).id;
+  const chat = await mockHarness.app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${mockConv}/chat`,
+    payload: { content: 'cors' },
+    headers: mockHeaders,
+  });
+  assert.equal(chat.headers['access-control-allow-origin'], '*', 'SSE 响应必须带 CORS 头,否则 Chrome 下整个流被拦');
+  await mockHarness.app.close();
+
+  const prodHarness = makeHarness({ mock: false, devCors: false, deepseekApiKey: 'test-key' });
+  t.after(() => prodHarness.app.close());
+  const prodHeaders = auth(await pair(prodHarness.app));
+  const list = await prodHarness.app.inject({
+    method: 'GET',
+    url: '/v1/conversations',
+    headers: prodHeaders,
+  });
+  assert.equal(list.headers['access-control-allow-origin'], undefined, '非 dev 不应放开 CORS');
+});
+
 test('所有受保护路由都要求 Bearer 令牌', async (t) => {
   const { app } = makeHarness();
   t.after(() => app.close());
@@ -661,6 +756,7 @@ test('所有受保护路由都要求 Bearer 令牌', async (t) => {
     { method: 'DELETE', url: `/v1/conversations/${convId}` },
     { method: 'POST', url: `/v1/conversations/${convId}/chat` },
     { method: 'POST', url: `/v1/conversations/${convId}/stop` },
+    { method: 'DELETE', url: `/v1/conversations/${convId}/messages/anything` },
     { method: 'GET', url: '/v1/usage' },
   ];
 

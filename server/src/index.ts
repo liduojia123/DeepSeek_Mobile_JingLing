@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ApiError, PairingService, makeAuthGuard, registerPairingRoute } from './auth.js';
 import { loadConfig, loadDotEnv, type Config } from './config.js';
+import { DEV_CORS_HEADERS } from './cors.js';
 import { openDb, purgeEphemeral, type Db } from './db.js';
 import { registerConversationRoutes, GenerationRegistry } from './routes/conversations.js';
 import { registerUsageRoutes } from './routes/usage.js';
@@ -27,12 +28,10 @@ export function buildApp(
 
   app.decorateRequest('deviceId', null);
 
-  // CORS 仅 dev(MOCK=1)放开,给 flutter run -d chrome 用
-  if (config.mock) {
+  // CORS 只在开发期放开(DEV_CORS,默认跟随 MOCK);生产部署必须为 0
+  if (config.devCors) {
     app.addHook('onRequest', async (request, reply) => {
-      reply.header('Access-Control-Allow-Origin', '*');
-      reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-      reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      for (const [name, value] of Object.entries(DEV_CORS_HEADERS)) reply.header(name, value);
       if (request.method === 'OPTIONS') reply.code(204).send();
     });
   }

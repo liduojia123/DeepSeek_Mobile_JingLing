@@ -21,6 +21,8 @@ export interface Config {
   maxToolLoops: number;
   /** 上游流式响应空闲超时:超过即放弃本轮,避免会话永久卡在 generating */
   upstreamTimeoutMs: number;
+  /** 浏览器调试用 CORS(独立于 MOCK:真实 key 下也可能需要 flutter run -d chrome) */
+  devCors: boolean;
   logRequests: boolean;
 }
 
@@ -39,6 +41,7 @@ const EnvSchema = z.object({
   DAILY_BUDGET_CNY: z.string().optional(),
   MAX_CONTENT_CHARS: z.string().optional(),
   UPSTREAM_TIMEOUT_MS: z.string().optional(),
+  DEV_CORS: z.string().optional(),
   LOG_REQUESTS: z.string().optional(),
 });
 
@@ -82,6 +85,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxContentChars: num(e.MAX_CONTENT_CHARS, 100_000),
     maxToolLoops: 10,
     upstreamTimeoutMs: num(e.UPSTREAM_TIMEOUT_MS, 120_000),
+    // 未显式配置时跟随 MOCK:mock 开发默认放开,真实部署默认关
+    devCors: e.DEV_CORS === undefined || e.DEV_CORS.trim() === '' ? mock : isOn(e.DEV_CORS),
     logRequests: e.LOG_REQUESTS?.trim() === '' || e.LOG_REQUESTS === undefined ? true : isOn(e.LOG_REQUESTS),
   };
   if (!config.mock && config.deepseekApiKey === '') {
