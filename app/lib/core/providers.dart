@@ -132,6 +132,11 @@ class ChatState {
     this.generating = false,
     this.thinking = '',
     this.streamText = '',
+    this.streamingCitations = const [],
+    this.streamingToolTraces = const [],
+    this.toolStatus,
+    this.title,
+    this.files = const [],
     this.pendingUserText,
     this.error,
     this.info,
@@ -144,14 +149,29 @@ class ChatState {
   final String thinking;
   final String streamText;
 
+  /// 流式过程中累积的引用与工具卡片(结束后以服务端落库的树为准)
+  final List<Citation> streamingCitations;
+  final List<ToolTrace> streamingToolTraces;
+
+  /// 正在进行的工具动作,用于实时提示(如"正在搜索…")
+  final String? toolStatus;
+  final String? title;
+
+  /// 已上传、待随本条消息发送的附件
+  final List<ChatFile> files;
+
   /// 已发送但服务端还没返回树时的本地用户气泡(避免"点了发送没反应")
   final String? pendingUserText;
   final String? error;
   final String? info;
 
   List<MessageNode> get pathNodes => detail?.pathNodes ?? const [];
-  StreamingAnswer get streaming =>
-      StreamingAnswer(thinking: thinking, text: streamText, citations: const [], toolTraces: const []);
+  StreamingAnswer get streaming => StreamingAnswer(
+        thinking: thinking,
+        text: streamText,
+        citations: streamingCitations,
+        toolTraces: streamingToolTraces,
+      );
 
   ChatState copyWith({
     String? conversationId,
@@ -160,6 +180,11 @@ class ChatState {
     bool? generating,
     String? thinking,
     String? streamText,
+    List<Citation>? streamingCitations,
+    List<ToolTrace>? streamingToolTraces,
+    Object? toolStatus = _unset,
+    Object? title = _unset,
+    List<ChatFile>? files,
     Object? pendingUserText = _unset,
     Object? error = _unset,
     Object? info = _unset,
@@ -171,6 +196,11 @@ class ChatState {
         generating: generating ?? this.generating,
         thinking: thinking ?? this.thinking,
         streamText: streamText ?? this.streamText,
+        streamingCitations: streamingCitations ?? this.streamingCitations,
+        streamingToolTraces: streamingToolTraces ?? this.streamingToolTraces,
+        toolStatus: identical(toolStatus, _unset) ? this.toolStatus : toolStatus as String?,
+        title: identical(title, _unset) ? this.title : title as String?,
+        files: files ?? this.files,
         pendingUserText: identical(pendingUserText, _unset) ? this.pendingUserText : pendingUserText as String?,
         error: identical(error, _unset) ? this.error : error as String?,
         info: identical(info, _unset) ? this.info : info as String?,
@@ -192,6 +222,7 @@ class ChatController extends Notifier<ChatState> {
     String? parentMessageId,
     bool parentIsRoot = false,
     bool regenerate = false,
+    List<String>? fileIds,
   }) async {
     final api = ref.read(apiProvider);
     final conversationId = state.conversationId;
@@ -201,6 +232,9 @@ class ChatController extends Notifier<ChatState> {
       generating: true,
       thinking: '',
       streamText: '',
+      streamingCitations: const [],
+      streamingToolTraces: const [],
+      toolStatus: null,
       pendingUserText: regenerate ? null : content,
       error: null,
       info: null,
@@ -214,12 +248,45 @@ class ChatController extends Notifier<ChatState> {
         regenerate: regenerate,
         parentMessageId: parentMessageId,
         parentIsRoot: parentIsRoot,
+        fileIds: fileIds,
       )) {
         switch (event) {
           case ThinkingDeltaEvent(:final text):
             state = state.copyWith(thinking: state.thinking + text);
           case TextDeltaEvent(:final text):
-            state = state.copyWith(streamText: state.streamText + text);
+            state = state.copyWith(streamText: state.streamText + text, toolStatus: null);
+          case ToolProgressEvent(:final tool, :final phase, :final queries, :final url):
+            state = state.copyWith(toolStatus: _toolStatusLabel(tool, phase, queries, url));
+          case ToolResultEvent(:final tool, :final summary, :final results, :final callId, :final status):
+            state = state.copyWith(
+              toolStatus: null,
+              streamingToolTraces: [
+                ...state.streamingToolTraces,
+                ToolTrace(
+                  tool: tool,
+                  summary: summary,
+                  callId: callId,
+                  status: status,
+                  results: results
+                      .map((entry) => ToolTraceResult(
+                            title: entry.title,
+                            url: entry.url,
+                            siteName: entry.siteName,
+                            snippet: entry.snippet,
+                          ))
+                      .toList(growable: false),
+                ),
+              ],
+            );
+          case CitationEvent(:final index, :final url, :final title, :final startIndex, :final endIndex):
+            state = state.copyWith(
+              streamingCitations: [
+                ...state.streamingCitations,
+                Citation(index: index, url: url, title: title, startIndex: startIndex, endIndex: endIndex),
+              ],
+            );
+          case TitleEvent(:final title):
+            state = state.copyWith(title: title);
           case DpappErrorEvent(:final message):
             failure = message;
           case SafetyBlockEvent(:final reason):
@@ -229,6 +296,8 @@ class ChatController extends Notifier<ChatState> {
               state = state.copyWith(info: '已停止生成');
             } else if (stopReason == 'error') {
               failure ??= '本轮生成失败';
+            } else if (stopReason == 'refusal') {
+              failure ??= '内容未通过安全审核';
             }
           default:
             break;
@@ -240,8 +309,44 @@ class ChatController extends Notifier<ChatState> {
       failure = '生成失败:$error';
     } finally {
       await _reload();
-      state = state.copyWith(generating: false, error: failure, pendingUserText: null);
+      state = state.copyWith(
+        generating: false,
+        error: failure,
+        pendingUserText: null,
+        files: const [],
+        toolStatus: null,
+      );
     }
+  }
+
+  static String _toolStatusLabel(String tool, String phase, List<String>? queries, String? url) {
+    if (phase == 'searching') {
+      final q = (queries ?? const []).map((item) => '「$item」').join(' ');
+      return q.isEmpty ? '正在联网搜索…' : '正在搜索 $q';
+    }
+    if (phase == 'reading' || phase == 'fetching') return '正在阅读网页…';
+    if (phase == 'finding') return '正在网页内查找…';
+    return '正在调用工具…';
+  }
+
+  /// 上传并解析附件(M2);解析是同步的,失败会带上游原因。
+  Future<void> attachFile({required String name, required List<int> bytes}) async {
+    final api = ref.read(apiProvider);
+    if (api == null) return;
+    state = state.copyWith(info: '正在上传并解析「$name」…', error: null);
+    try {
+      final result = await api.uploadFile(filename: name, bytes: bytes);
+      state = state.copyWith(
+        info: null,
+        files: [...state.files, ChatFile(id: result.fileId, name: result.name)],
+      );
+    } on ApiException catch (error) {
+      state = state.copyWith(error: error.message, info: null);
+    }
+  }
+
+  void removeFile(String id) {
+    state = state.copyWith(files: state.files.where((file) => file.id != id).toList(growable: false));
   }
 
   Future<void> regenerate(MessageNode assistantNode) async {
@@ -308,7 +413,15 @@ class ChatController extends Notifier<ChatState> {
     if (api == null || conversationId == null) return;
     try {
       final detail = await api.getConversation(conversationId);
-      state = state.copyWith(detail: detail, thinking: '', streamText: '');
+      state = state.copyWith(
+        detail: detail,
+        thinking: '',
+        streamText: '',
+        streamingCitations: const [],
+        streamingToolTraces: const [],
+        toolStatus: null,
+        title: null,
+      );
       ref.invalidate(conversationsProvider);
     } on ApiException catch (error) {
       state = state.copyWith(error: error.message);

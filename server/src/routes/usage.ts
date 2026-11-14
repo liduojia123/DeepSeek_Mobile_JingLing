@@ -63,6 +63,17 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: { db: Db; config:
       { calls: 0, tokens_in: 0, tokens_out: 0, cost: 0 },
     );
 
+    // M2:按 kind(模型/搜索/抓取/OCR…)拆开,便于核对工具调用费用
+    const byKindRows = db
+      .prepare(
+        `SELECT kind, COUNT(*) AS calls, SUM(quantity) AS quantity, SUM(cost) AS cost
+           FROM usage_log
+          WHERE ${where}
+          GROUP BY kind
+          ORDER BY kind ASC`,
+      )
+      .all(...params) as Array<{ kind: string; calls: number; quantity: number; cost: number }>;
+
     return {
       days: rows.map((row) => ({
         date: row.date,
@@ -72,6 +83,12 @@ export function registerUsageRoutes(app: FastifyInstance, ctx: { db: Db; config:
         cost: Number(row.cost.toFixed(6)),
       })),
       totals: { ...totals, cost: Number(totals.cost.toFixed(6)) },
+      by_kind: byKindRows.map((row) => ({
+        kind: row.kind,
+        calls: row.calls,
+        quantity: row.quantity,
+        cost: Number(row.cost.toFixed(6)),
+      })),
       // 预算字段 M5 启用熔断,M0 只回显配置值
       budget: { daily_cny: config.dailyBudgetCny },
     };

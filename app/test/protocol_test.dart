@@ -73,4 +73,60 @@ void main() {
       expect(DpappEvent.fromJson({'type': 'error', 'code': 'x', 'message': 'y'}), isA<DpappErrorEvent>());
     });
   });
+
+  // M2 协议扩展:工具结果、引用偏移、标题、扩展 usage
+  group('M2 事件', () {
+    test('tool_result 带来源列表与 call_id', () {
+      final event = DpappEvent.fromJson({
+        'type': 'tool_result',
+        'tool': 'deepseek_web_search',
+        'call_id': 'call-1',
+        'status': 'completed',
+        'summary': '搜索「鲸灵」 → 1 条结果',
+        'results': [
+          {'title': '结果A', 'url': 'https://example.com/a', 'site_name': 'example.com', 'snippet': '摘要'},
+        ],
+      });
+      final result = event! as ToolResultEvent;
+      expect(result.results.length, 1);
+      expect(result.results.first.siteName, 'example.com');
+      expect(result.callId, 'call-1');
+    });
+
+    test('citation 带正文字符偏移', () {
+      final event = DpappEvent.fromJson({
+        'type': 'citation',
+        'index': 1,
+        'url': 'https://example.com/a',
+        'title': '结果A',
+        'start_index': 0,
+        'end_index': 8,
+      })! as CitationEvent;
+      expect(event.startIndex, 0);
+      expect(event.endIndex, 8);
+    });
+
+    test('title 事件与扩展 usage', () {
+      expect((DpappEvent.fromJson({'type': 'title', 'title': '鲸灵与搜索'})! as TitleEvent).title, '鲸灵与搜索');
+      final end = DpappEvent.fromJson({
+        'type': 'message_end',
+        'usage': {'tokens_in': 100, 'tokens_out': 20, 'tokens_cached': 40, 'search_calls': 3, 'fetch_calls': 1},
+        'cost_estimate': 0.01,
+        'stop_reason': 'end_turn',
+      })! as MessageEndEvent;
+      expect(end.usage.tokensCached, 40);
+      expect(end.usage.searchCalls, 3);
+      expect(end.usage.fetchCalls, 1);
+    });
+
+    test('refusal 也是合法终止原因', () {
+      final end = DpappEvent.fromJson({
+        'type': 'message_end',
+        'usage': {'tokens_in': 1, 'tokens_out': 1},
+        'cost_estimate': 0,
+        'stop_reason': 'refusal',
+      })! as MessageEndEvent;
+      expect(end.stopReason, 'refusal');
+    });
+  });
 }

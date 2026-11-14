@@ -30,7 +30,26 @@ class PendingUserBubble extends StatelessWidget {
   }
 }
 
-/// 流式回答气泡:思考增长 + 正文增长。
+/// 正文里按引用偏移插入 `[n]` 角标(偏移相对本轮正文,和服务端给的 start/end 一致)。
+String markCitations(String text, List<Citation> citations) {
+  if (text.isEmpty || citations.isEmpty) return text;
+  final inserts = <int, List<String>>{};
+  for (final citation in citations) {
+    final position = citation.endIndex ?? -1;
+    if (position < 0 || position > text.length) continue;
+    inserts.putIfAbsent(position, () => <String>[]).add('[${citation.index}]');
+  }
+  if (inserts.isEmpty) return text;
+  final buffer = StringBuffer();
+  for (var index = 0; index <= text.length; index++) {
+    final marks = inserts[index];
+    if (marks != null) buffer.write(marks.join());
+    if (index < text.length) buffer.write(text[index]);
+  }
+  return buffer.toString();
+}
+
+/// 流式回答气泡:思考增长 + 工具过程卡片 + 正文增长。
 class StreamingAnswerBubble extends StatelessWidget {
   const StreamingAnswerBubble({super.key, required this.answer, required this.generating});
 
@@ -47,6 +66,7 @@ class StreamingAnswerBubble extends StatelessWidget {
         children: [
           if (answer.thinking.isNotEmpty)
             ThinkingBlock(text: answer.thinking, streaming: generating && answer.text.isEmpty),
+          for (final trace in answer.toolTraces) ToolTraceCard(trace: trace),
           if (answer.text.isEmpty && generating)
             Row(
               children: [
@@ -56,11 +76,11 @@ class StreamingAnswerBubble extends StatelessWidget {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 const SizedBox(width: 8),
-                Text('鲸灵正在思考…', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                Text('鲸灵正在处理…', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
               ],
             )
           else if (answer.text.isNotEmpty)
-            MarkdownBody(data: answer.text, selectable: true),
+            MarkdownBody(data: markCitations(answer.text, answer.citations)),
         ],
       ),
     );
@@ -136,7 +156,7 @@ class MessageBubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (node.thinking.trim().isNotEmpty) ThinkingBlock(text: node.thinking),
-              for (final trace in node.toolTraces) _ToolTraceCard(trace: trace),
+              for (final trace in node.toolTraces) ToolTraceCard(trace: trace),
               if (node.text.trim().isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
@@ -152,7 +172,7 @@ class MessageBubble extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   // 不能开 selectable:选中文字会吞掉长按手势,长按菜单(复制/重新生成/删除)就出不来
-                  child: MarkdownBody(data: node.text),
+                  child: MarkdownBody(data: markCitations(node.text, node.citations)),
                 ),
               if (node.citations.isNotEmpty) _CitationList(citations: node.citations),
               if (node.interrupted)
@@ -200,33 +220,101 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
-class _ToolTraceCard extends StatelessWidget {
-  const _ToolTraceCard({required this.trace});
+/// 工具过程卡片:搜索/读链接/页内查找。有结果时可展开看来源列表。
+class ToolTraceCard extends StatefulWidget {
+  const ToolTraceCard({super.key, required this.trace});
 
   final ToolTrace trace;
 
   @override
+  State<ToolTraceCard> createState() => _ToolTraceCardState();
+}
+
+class _ToolTraceCardState extends State<ToolTraceCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final trace = widget.trace;
+    final icon = switch (trace.tool) {
+      'deepseek_read_url' => Icons.link,
+      _ => Icons.travel_explore,
+    };
+    final expandable = trace.results.isNotEmpty;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.build_outlined, size: 15, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '${trace.tool} · ${trace.summary}',
-              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+          InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: expandable ? () => setState(() => _expanded = !_expanded) : null,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(icon, size: 15, color: theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      trace.summary,
+                      style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      maxLines: _expanded ? 3 : 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (expandable)
+                    Icon(
+                      _expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 16,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                ],
+              ),
             ),
           ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final result in trace.results)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            result.title,
+                            style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (result.siteName != null)
+                            Text(
+                              result.siteName!,
+                              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
+                            ),
+                          if (result.snippet != null && result.snippet!.isNotEmpty)
+                            Text(
+                              result.snippet!,
+                              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
     );

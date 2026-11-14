@@ -6,14 +6,26 @@
 library;
 
 class DpappUsage {
-  const DpappUsage({required this.tokensIn, required this.tokensOut});
+  const DpappUsage({
+    required this.tokensIn,
+    required this.tokensOut,
+    this.tokensCached = 0,
+    this.searchCalls = 0,
+    this.fetchCalls = 0,
+  });
 
   final int tokensIn;
   final int tokensOut;
+  final int tokensCached;
+  final int searchCalls;
+  final int fetchCalls;
 
   factory DpappUsage.fromJson(Map<String, dynamic> json) => DpappUsage(
         tokensIn: _asInt(json['tokens_in']) ?? 0,
         tokensOut: _asInt(json['tokens_out']) ?? 0,
+        tokensCached: _asInt(json['tokens_cached']) ?? 0,
+        searchCalls: _asInt(json['search_calls']) ?? 0,
+        fetchCalls: _asInt(json['fetch_calls']) ?? 0,
       );
 }
 
@@ -40,12 +52,18 @@ sealed class DpappEvent {
         return ToolProgressEvent(
           tool: _asString(json['tool']) ?? '',
           phase: _asString(json['phase']) ?? '',
-          query: _asString(json['query']),
+          actionType: _asString(json['action_type']),
+          queries: _asStringList(json['queries']),
+          url: _asString(json['url']),
+          pattern: _asString(json['pattern']),
+          step: _asInt(json['step']),
         );
       case 'tool_result':
         return ToolResultEvent(
           tool: _asString(json['tool']) ?? '',
           summary: _asString(json['summary']) ?? '',
+          callId: _asString(json['call_id']),
+          status: _asString(json['status']),
           results: _asList(json['results'])
               .map((item) => ToolResultEntry.fromJson(item))
               .toList(growable: false),
@@ -57,7 +75,11 @@ sealed class DpappEvent {
           index: _asInt(json['index']) ?? 0,
           url: _asString(json['url']) ?? '',
           title: _asString(json['title']) ?? '',
+          startIndex: _asInt(json['start_index']),
+          endIndex: _asInt(json['end_index']),
         );
+      case 'title':
+        return TitleEvent(title: _asString(json['title']) ?? '');
       case 'file_attached':
         return FileAttachedEvent(
           fileId: _asString(json['file_id']) ?? '',
@@ -101,31 +123,63 @@ final class ThinkingEndEvent extends DpappEvent {
 }
 
 final class ToolProgressEvent extends DpappEvent {
-  const ToolProgressEvent({required this.tool, required this.phase, this.query});
+  const ToolProgressEvent({
+    required this.tool,
+    required this.phase,
+    this.actionType,
+    this.queries,
+    this.url,
+    this.pattern,
+    this.step,
+  });
+
   final String tool;
   final String phase;
-  final String? query;
+  final String? actionType;
+  final List<String>? queries;
+  final String? url;
+  final String? pattern;
+  final int? step;
 }
 
 final class ToolResultEntry {
-  const ToolResultEntry({required this.title, required this.url, this.site});
+  const ToolResultEntry({
+    required this.title,
+    required this.url,
+    this.siteName,
+    this.snippet,
+    this.publishedAt,
+  });
 
   final String title;
   final String url;
-  final String? site;
+  final String? siteName;
+  final String? snippet;
+  final String? publishedAt;
 
   factory ToolResultEntry.fromJson(Map<String, dynamic> json) => ToolResultEntry(
         title: _asString(json['title']) ?? '',
         url: _asString(json['url']) ?? '',
-        site: _asString(json['site']),
+        siteName: _asString(json['site_name']),
+        snippet: _asString(json['snippet']),
+        publishedAt: _asString(json['published_at']),
       );
 }
 
 final class ToolResultEvent extends DpappEvent {
-  const ToolResultEvent({required this.tool, required this.summary, required this.results});
+  const ToolResultEvent({
+    required this.tool,
+    required this.summary,
+    required this.results,
+    this.callId,
+    this.status,
+  });
+
   final String tool;
   final String summary;
   final List<ToolResultEntry> results;
+  final String? callId;
+  final String? status;
 }
 
 final class TextDeltaEvent extends DpappEvent {
@@ -134,10 +188,21 @@ final class TextDeltaEvent extends DpappEvent {
 }
 
 final class CitationEvent extends DpappEvent {
-  const CitationEvent({required this.index, required this.url, required this.title});
+  const CitationEvent({
+    required this.index,
+    required this.url,
+    required this.title,
+    this.startIndex,
+    this.endIndex,
+  });
+
   final int index;
   final String url;
   final String title;
+
+  /// 正文里的字符偏移(相对本轮正文),客户端据此插引用角标
+  final int? startIndex;
+  final int? endIndex;
 }
 
 final class FileAttachedEvent extends DpappEvent {
@@ -150,6 +215,12 @@ final class FileAttachedEvent extends DpappEvent {
 final class SafetyBlockEvent extends DpappEvent {
   const SafetyBlockEvent({required this.reason});
   final String reason;
+}
+
+/// 服务端生成的会话标题(开启 title 时)
+final class TitleEvent extends DpappEvent {
+  const TitleEvent({required this.title});
+  final String title;
 }
 
 final class MessageEndEvent extends DpappEvent {
@@ -186,3 +257,7 @@ Map<String, dynamic> _asMap(Object? value) =>
 List<Map<String, dynamic>> _asList(Object? value) => value is List
     ? value.whereType<Map>().map((item) => Map<String, dynamic>.from(item)).toList(growable: false)
     : const [];
+
+List<String>? _asStringList(Object? value) => value is List
+    ? value.whereType<String>().toList(growable: false)
+    : null;

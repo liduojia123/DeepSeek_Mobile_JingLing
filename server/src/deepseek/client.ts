@@ -3,7 +3,10 @@ import { normalizeDeepSeekChunk, type ChatDelta } from './events.js';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  /** 纯文本,或 M2 的富内容数组(文件引用: {type:"file", file_id}) */
+  content: string | Array<Record<string, unknown>>;
+  /** M2:上一轮 assistant 的 server_tool_calls 块原样回传,阅读链接的网页才会拼回上下文 */
+  server_tool_calls?: unknown[];
 }
 
 export class UpstreamError extends Error {
@@ -31,6 +34,22 @@ export async function* streamChatCompletion(params: StreamChatParams): AsyncGene
   const { config, messages, signal } = params;
   const url = `${config.deepseekBaseUrl.replace(/\/+$/, '')}/chat/completions`;
 
+  const body: Record<string, unknown> = {
+    model: config.model,
+    messages,
+    stream: true,
+    stream_options: { include_usage: true },
+    thinking: { type: 'enabled' },
+  };
+
+  // M2:服务端工具由 DeepSeek 自动执行,我们只声明
+  const tools: Array<{ type: string; name: string }> = [];
+  if (config.enableWebSearch) tools.push({ type: 'deepseek_web_search', name: 'deepseek_web_search' });
+  if (config.enableReadUrl) tools.push({ type: 'deepseek_read_url', name: 'deepseek_read_url' });
+  if (tools.length > 0) body.tools = tools;
+  if (config.safetyLevel !== 'off') body.safety_check = { level: config.safetyLevel };
+  if (config.titleEnabled) body.title = { enabled: true };
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -38,13 +57,7 @@ export async function* streamChatCompletion(params: StreamChatParams): AsyncGene
       Accept: 'text/event-stream',
       Authorization: `Bearer ${config.deepseekApiKey}`,
     },
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      stream: true,
-      stream_options: { include_usage: true },
-      thinking: { type: 'enabled' },
-    }),
+    body: JSON.stringify(body),
     signal,
   });
 

@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -48,9 +49,37 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _send() async {
     final text = _input.text.trim();
-    if (text.isEmpty) return;
+    final files = ref.read(chatProvider).files;
+    if (text.isEmpty && files.isEmpty) return;
     _input.clear();
-    await ref.read(chatProvider.notifier).send(text);
+    await ref.read(chatProvider.notifier).send(
+          text,
+          fileIds: files.map((file) => file.id).toList(growable: false),
+        );
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: const [
+          'pdf', 'doc', 'docx', 'ppt', 'pptx',
+          'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff',
+          'txt', 'md', 'csv', 'json', 'xlsx', 'xls', 'epub',
+        ],
+      );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('文件内容为空')));
+        return;
+      }
+      await ref.read(chatProvider.notifier).attachFile(name: file.name, bytes: bytes);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('选择文件失败:$error')));
+    }
   }
 
   Future<void> _switchToSibling(List<MessageNode> siblings, int index) async {
@@ -136,7 +165,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
     });
 
-    final title = chat.detail?.conversation.displayTitle ?? '对话';
+    final title = chat.title ?? chat.detail?.conversation.displayTitle ?? '对话';
     _scrollToBottom();
 
     return Scaffold(
@@ -192,6 +221,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (chat.pendingUserText != null) {
       items.add(PendingUserBubble(text: chat.pendingUserText!));
     }
+    if (chat.toolStatus != null) {
+      items.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 8),
+              Text(
+                chat.toolStatus!,
+                style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (hasStreaming) {
       items.add(StreamingAnswerBubble(answer: streaming, generating: chat.generating));
     }
@@ -212,35 +258,62 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           color: theme.colorScheme.surface,
           border: Border(top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.4))),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _input,
-                minLines: 1,
-                maxLines: 5,
-                enabled: !chat.generating,
-                decoration: InputDecoration(
-                  hintText: chat.generating ? '鲸灵正在回答…' : '给鲸灵发消息…',
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+            if (chat.files.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final file in chat.files)
+                      InputChip(
+                        avatar: const Icon(Icons.description_outlined, size: 16),
+                        label: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        onDeleted: () => ref.read(chatProvider.notifier).removeFile(file.id),
+                      ),
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            chat.generating
-                ? IconButton.filledTonal(
-                    tooltip: '停止生成',
-                    onPressed: () => ref.read(chatProvider.notifier).stop(),
-                    icon: const Icon(Icons.stop),
-                  )
-                : IconButton.filled(
-                    tooltip: '发送',
-                    onPressed: _send,
-                    icon: const Icon(Icons.arrow_upward),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  tooltip: '添加文件',
+                  onPressed: chat.generating ? null : _pickFile,
+                  icon: const Icon(Icons.attach_file),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    minLines: 1,
+                    maxLines: 5,
+                    enabled: !chat.generating,
+                    decoration: InputDecoration(
+                      hintText: chat.generating ? '鲸灵正在回答…' : '给鲸灵发消息…',
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                chat.generating
+                    ? IconButton.filledTonal(
+                        tooltip: '停止生成',
+                        onPressed: () => ref.read(chatProvider.notifier).stop(),
+                        icon: const Icon(Icons.stop),
+                      )
+                    : IconButton.filled(
+                        tooltip: '发送',
+                        onPressed: _send,
+                        icon: const Icon(Icons.arrow_upward),
+                      ),
+              ],
+            ),
           ],
         ),
       ),

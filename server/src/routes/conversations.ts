@@ -29,6 +29,7 @@ interface MessageRow {
   thinking: string;
   citations_json: string;
   tool_traces_json: string;
+  server_blocks_json: string;
   tokens_in: number;
   tokens_out: number;
   cost: number;
@@ -66,6 +67,8 @@ const ChatBody = z.object({
   content: z.string().optional(),
   parent_message_id: z.string().min(1).nullable().optional(),
   regenerate: z.boolean().optional(),
+  /** M2:已上传文件的 id 列表(服务端自己的 file.id),会作为 file 块一起发给模型 */
+  file_ids: z.array(z.string().min(1)).max(20).optional(),
 });
 
 const ListQuery = z.object({
@@ -292,8 +295,10 @@ export function registerConversationRoutes(
       throw new ApiError(400, 'invalid_parent', '重新生成的 parent_message_id 必须指向用户消息');
     }
 
-    // 1) 落库用户消息(重新生成除外)
+    // 1) 落库用户消息(重新生成除外)。附件以 file 块存进 blocks_json,
+    //    同时把 provider_file_id 一起记下,组装上下文时不用再查库。
     let userMessageId: string | null = null;
+    const attachedFiles = regenerate ? [] : attachFiles(db, body.file_ids ?? []);
     if (!regenerate) {
       userMessageId = randomUUID();
       insertMessage(db, {
@@ -301,20 +306,21 @@ export function registerConversationRoutes(
         conversationId: conv.id,
         parentId: parentId ?? null,
         role: 'user',
-        blocks: [{ type: 'text', text: userContent }],
+        blocks: [
+          ...attachedFiles.map((file) => ({
+            type: 'file',
+            file_id: file.id,
+            provider_file_id: file.provider_file_id,
+            name: file.name,
+          })),
+          { type: 'text', text: userContent },
+        ],
       });
     }
 
     const assistantParentId = regenerate ? (parentId ?? null) : userMessageId;
     const contextRows = activePath(allMessages(db, conv.id), assistantParentId);
-    const messages: ChatMessage[] = contextRows
-      .filter((row) => row.role === 'user' || row.role === 'assistant')
-      .map((row) => ({
-        role: row.role as 'user' | 'assistant',
-        content: blocksToText(row.blocks_json),
-      }))
-      // 中断/失败留下的空助手消息不进上下文:部分 OpenAI 兼容实现会拒绝空 content
-      .filter((message) => message.content !== '');
+    const messages: ChatMessage[] = buildChatMessages(contextRows);
 
     // 2) 开流
     reply.hijack();
@@ -364,6 +370,9 @@ export function registerConversationRoutes(
       user_message_id: userMessageId,
       model: config.model,
     });
+    for (const file of attachedFiles) {
+      writeEvent({ type: 'file_attached', file_id: file.id, name: file.name, status: 'parsed' });
+    }
 
     let result: Awaited<ReturnType<typeof runAgentTurn>>;
     try {
@@ -375,9 +384,16 @@ export function registerConversationRoutes(
         text: '',
         tokensIn: 0,
         tokensOut: 0,
+        tokensCached: 0,
+        searchCalls: 0,
+        fetchCalls: 0,
         cost: 0,
         stopReason: 'error',
         errorMessage: '模型服务暂时不可用,请稍后重试',
+        safetyBlocked: false,
+        citations: [],
+        toolTraces: [],
+        serverBlocks: [],
       };
     }
 
@@ -400,6 +416,12 @@ export function registerConversationRoutes(
             message: result.errorMessage ?? '模型服务暂时不可用,请稍后重试',
           });
         }
+        if (result.safetyBlocked) {
+          writeEvent({
+            type: 'safety_block',
+            reason: result.errorMessage ?? '输入内容未通过安全审核',
+          });
+        }
 
         // 回答、active_leaf、标题、用量必须原子写入,否则崩溃会留下不在路径上的孤儿消息
         db.transaction(() => {
@@ -410,6 +432,9 @@ export function registerConversationRoutes(
             role: 'assistant',
             blocks: [{ type: 'text', text: result.text }],
             thinking: result.thinking,
+            citations: result.citations,
+            toolTraces: result.toolTraces,
+            serverBlocks: result.serverBlocks,
             tokensIn: result.tokensIn,
             tokensOut: result.tokensOut,
             cost: result.cost,
@@ -421,7 +446,15 @@ export function registerConversationRoutes(
             conv.id,
           );
 
-          if (userMessageId !== null && conv.title.trim() === '') {
+          // M2:优先用服务端生成的标题;关掉 title 或没生成时回退到首条消息截断
+          const generatedTitle = result.title?.trim();
+          if (generatedTitle !== undefined && generatedTitle !== '') {
+            db.prepare('UPDATE conversation SET title = ? WHERE id = ? AND title = ?').run(
+              generatedTitle.slice(0, 200),
+              conv.id,
+              '',
+            );
+          } else if (userMessageId !== null && conv.title.trim() === '') {
             db.prepare('UPDATE conversation SET title = ? WHERE id = ?').run(
               userContent.replace(/\s+/g, ' ').slice(0, 30),
               conv.id,
@@ -436,9 +469,38 @@ export function registerConversationRoutes(
               randomUUID(),
               nowIso(),
               result.tokensIn + result.tokensOut,
-              result.cost,
+              // 只记 token 费用;搜索/抓取单独按次记账,避免同一笔费用被重复累计
+              (result.tokensIn * config.priceInCnyPerMtok + result.tokensOut * config.priceOutCnyPerMtok) / 1_000_000,
               result.tokensIn,
               result.tokensOut,
+              conv.id,
+              assistantId,
+            );
+          }
+
+          // M2:工具调用按次计费(搜索/抓取)
+          const insertUsage = db.prepare(
+            `INSERT INTO usage_log (id, ts, kind, quantity, cost, conversation_id, message_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          );
+          if (result.searchCalls > 0) {
+            insertUsage.run(
+              randomUUID(),
+              nowIso(),
+              'search',
+              result.searchCalls,
+              result.searchCalls * config.searchPriceCnyPerCall,
+              conv.id,
+              assistantId,
+            );
+          }
+          if (result.fetchCalls > 0) {
+            insertUsage.run(
+              randomUUID(),
+              nowIso(),
+              'fetch',
+              result.fetchCalls,
+              result.fetchCalls * config.fetchPriceCnyPerCall,
               conv.id,
               assistantId,
             );
@@ -447,7 +509,13 @@ export function registerConversationRoutes(
 
         writeEvent({
           type: 'message_end',
-          usage: { tokens_in: result.tokensIn, tokens_out: result.tokensOut },
+          usage: {
+            tokens_in: result.tokensIn,
+            tokens_out: result.tokensOut,
+            tokens_cached: result.tokensCached,
+            search_calls: result.searchCalls,
+            fetch_calls: result.fetchCalls,
+          },
           cost_estimate: Number(result.cost.toFixed(6)),
           stop_reason: result.stopReason,
         });
@@ -473,6 +541,7 @@ interface InsertMessageParams {
   thinking?: string;
   citations?: unknown;
   toolTraces?: unknown;
+  serverBlocks?: unknown;
   tokensIn?: number;
   tokensOut?: number;
   cost?: number;
@@ -483,8 +552,8 @@ function insertMessage(db: Db, params: InsertMessageParams): void {
   db.prepare(
     `INSERT INTO message
        (id, conversation_id, parent_id, role, blocks_json, thinking, citations_json,
-        tool_traces_json, tokens_in, tokens_out, cost, stop_reason, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tool_traces_json, server_blocks_json, tokens_in, tokens_out, cost, stop_reason, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     params.id,
     params.conversationId,
@@ -494,12 +563,82 @@ function insertMessage(db: Db, params: InsertMessageParams): void {
     params.thinking ?? '',
     JSON.stringify(params.citations ?? []),
     JSON.stringify(params.toolTraces ?? []),
+    JSON.stringify(params.serverBlocks ?? []),
     params.tokensIn ?? 0,
     params.tokensOut ?? 0,
     params.cost ?? 0,
     params.stopReason ?? null,
     nowIso(),
   );
+}
+
+interface AttachedFile {
+  id: string;
+  provider_file_id: string;
+  name: string;
+}
+
+/** 校验并解析 file_ids:必须是我们库里已解析成功的文件。 */
+function attachFiles(db: Db, fileIds: string[]): AttachedFile[] {
+  if (fileIds.length === 0) return [];
+  const lookup = db.prepare('SELECT id, provider_file_id, name, parse_status FROM file WHERE id = ?');
+  const attached: AttachedFile[] = [];
+  for (const id of fileIds) {
+    const row = lookup.get(id) as
+      | { id: string; provider_file_id: string; name: string; parse_status: string }
+      | undefined;
+    if (!row) throw new ApiError(400, 'invalid_file', `文件不存在: ${id}`);
+    if (row.parse_status !== 'parsed') {
+      throw new ApiError(400, 'file_not_ready', `文件尚未解析完成: ${row.name}`);
+    }
+    attached.push({ id: row.id, provider_file_id: row.provider_file_id, name: row.name });
+  }
+  return attached;
+}
+
+/**
+ * 把消息树路径装配成上游 messages。
+ * M2 三件事:用户消息里的 file 块转成 {type:"file",file_id};assistant 的 server_tool_calls 原样回传
+ * (阅读链接的网页靠它拼回上下文);空正文助手消息跳过。
+ */
+function buildChatMessages(rows: MessageRow[]): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  for (const row of rows) {
+    if (row.role !== 'user' && row.role !== 'assistant') continue;
+    const blocks = parseJson<Array<{ type?: string; text?: string; provider_file_id?: string }>>(
+      row.blocks_json,
+      [],
+    );
+    const text = blocks
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text ?? '')
+      .join('');
+    const files = blocks.filter(
+      (block) => block.type === 'file' && typeof block.provider_file_id === 'string',
+    );
+
+    if (row.role === 'assistant') {
+      if (text === '') continue;
+      const message: ChatMessage = { role: 'assistant', content: text };
+      const serverBlocks = parseJson<unknown[]>(row.server_blocks_json, []);
+      if (serverBlocks.length > 0) message.server_tool_calls = serverBlocks;
+      messages.push(message);
+      continue;
+    }
+
+    if (files.length > 0) {
+      messages.push({
+        role: 'user',
+        content: [
+          ...files.map((file) => ({ type: 'file', file_id: file.provider_file_id as string })),
+          { type: 'text', text },
+        ],
+      });
+      continue;
+    }
+    if (text !== '') messages.push({ role: 'user', content: text });
+  }
+  return messages;
 }
 
 function getConversationOrThrow(db: Db, id: string): ConversationRow {

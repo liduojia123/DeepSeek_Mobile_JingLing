@@ -5,6 +5,7 @@ import { loadConfig, loadDotEnv, type Config } from './config.js';
 import { DEV_CORS_HEADERS } from './cors.js';
 import { openDb, purgeEphemeral, type Db } from './db.js';
 import { registerConversationRoutes, GenerationRegistry } from './routes/conversations.js';
+import { registerFileRoutes } from './routes/files.js';
 import { registerUsageRoutes } from './routes/usage.js';
 
 export interface AppContext {
@@ -73,6 +74,7 @@ export function buildApp(
     secured.addHook('preHandler', makeAuthGuard(db));
     registerConversationRoutes(secured, ctx, registry);
     registerUsageRoutes(secured, ctx);
+    await registerFileRoutes(secured, ctx);
   });
 
   return app;

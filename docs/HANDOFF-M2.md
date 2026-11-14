@@ -71,6 +71,17 @@
 - 计费:网页搜索按“查询词条数”计次(3 个 queries = 3 次),抓取按成功网页数计次,文件解析按页数计次;`usage.server_tool_use.tool_search/tool_fetch` 是计费次数。
 - 联网工具可以单独作为 Search/Fetch/OCR API 调,但**本单不用**,统一走对话接口(服务端工具由 DeepSeek 执行,零维护)。
 
+## 0.1 Spike 结论(2026-11-14 实测,已替代上文“需确认”项)
+
+| # | 问题 | 结论 | 对实现的影响 |
+|---|---|---|---|
+| 1 | 多轮回传 | ✅ 可用:把上一轮 assistant 按 `{role:"assistant", content:"…", server_tool_calls:[…原样…]}` 放进 messages,追问网页细节能答(实测问“语音接口有哪些”,答出 ASR/TTS) | 落库时把 `server_tool_calls` 块原样存起来(含块内 signature),组装历史时原样回传;不需要切 Messages API |
+| 2 | 拒答形态 | ⚠️ CC 下**没有结构化拒答信号**:`finish_reason` 仍是 `stop`,`safety_tokens` 为 0,模型只是在正文里说“我无法提供…”。输入命中审核时服务端会返回 **400 `Content Exists Risk`** | `safety_block` 事件改为映射「输入 400 Content Exists Risk」这一种情况;输出侧拒答不做特殊 UI(就当普通回答展示),DESIGN F7 的“拒答标识”按此收敛并记录 |
+| 3 | 文件引用 | ⚠️ Chat Completions **不认 `document` 块**,报 `unknown variant,expected text/image_url/file`;正确形状是 `{"type":"file","file_id":"file-api-…"}`(实测命中文档内暗号) | 用户消息 content 用 `[{type:"file",file_id},{type:"text",text}]`;解析 purpose 仍是 `text_recognition`/`rich_layout_recognition` |
+| 4 | 文件错误码 | 伪造 PDF → 400 “file format is not supported”;`purpose` 放在 `file` 之后 → 400 且报错明确指出顺序 | 服务端转发时**先写 purpose 再写 file**,并把上游 400 原样转成客户端可读错误 |
+
+另:上传成功的响应形如 `{id:"file-api-…", object:"file", bytes, created_at, filename, purpose}`,无解析状态字段(解析是同步的,成功才返回 id)。
+
 ## 1. Spike 闸门(M2 第一天,先做后写)
 
 四条里任何一条结论不同,先改本文件再动代码:
@@ -135,3 +146,10 @@
 - 知识库/RAG、多文件批量解析、文档预览器;
 - 拍照/相册入口(v1.5 G3);
 - 图片搜索的图库展示(先只展示站点与标题)。
+
+## 0.2 实现期踩到的坑(施工时已修,后续里程碑别重犯)
+
+1. **Chat Completions 的文件块是 `{type:"file", file_id:"file-api-…"}`**,不是 Messages API 的 `{type:"document", source:{type:"file"}}`——照抄文档会 422 `unknown variant`。
+2. **转发文件时不要 `new Uint8Array(buffer)`**:Node 的 Buffer 是共享内存池上的视图,这样构造会取到整个 8KB 池,上传给上游的是垃圾字节,表现为模型回答“文档内容为空”。正确写法 `Uint8Array.from(buffer)`(或按 byteOffset/byteLength 构造)。这个 bug 曾一度被误判成“思考模式与文件不兼容”。
+3. 工具结果块(`server_tool_calls`)是**整块下发**的,不要按 chunk 拼接;原样落库、下一轮原样回传,阅读链接的网页内容靠块内 `signature` 才能拼回上下文。
+4. 工具费用按**查询词条数**(不是调用次数)与**成功抓取网页数**计,`usage.server_tool_use.tool_search/tool_fetch` 才是计费口径。

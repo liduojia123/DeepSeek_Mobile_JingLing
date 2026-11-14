@@ -24,6 +24,18 @@ export interface Config {
   /** 浏览器调试用 CORS(独立于 MOCK:真实 key 下也可能需要 flutter run -d chrome) */
   devCors: boolean;
   logRequests: boolean;
+
+  // ---- M2:联网工具 / 文件 / 安全 / 标题 ----
+  enableWebSearch: boolean;
+  enableReadUrl: boolean;
+  safetyLevel: 'off' | 'low' | 'high';
+  titleEnabled: boolean;
+  fileMaxBytes: number;
+  /** 工具单价(元/次),按官方价填:搜索 5 元/千次、抓取 5 元/千次 */
+  searchPriceCnyPerCall: number;
+  fetchPriceCnyPerCall: number;
+  /** 文档解析单价(元/页):OCR 1.5 元/千页 */
+  ocrPriceCnyPerPage: number;
 }
 
 const EnvSchema = z.object({
@@ -43,6 +55,14 @@ const EnvSchema = z.object({
   UPSTREAM_TIMEOUT_MS: z.string().optional(),
   DEV_CORS: z.string().optional(),
   LOG_REQUESTS: z.string().optional(),
+  ENABLE_WEB_SEARCH: z.string().optional(),
+  ENABLE_READ_URL: z.string().optional(),
+  SAFETY_LEVEL: z.string().optional(),
+  TITLE_ENABLED: z.string().optional(),
+  FILE_MAX_BYTES: z.string().optional(),
+  SEARCH_PRICE_CNY_PER_CALL: z.string().optional(),
+  FETCH_PRICE_CNY_PER_CALL: z.string().optional(),
+  OCR_PRICE_CNY_PER_PAGE: z.string().optional(),
 });
 
 /** Node 20.12+ 原生 .env 支持,不引入 dotenv 依赖。 */
@@ -57,6 +77,12 @@ const num = (v: string | undefined, fallback: number): number => {
   const n = Number(v);
   if (!Number.isFinite(n)) throw new Error(`配置项不是合法数字: ${v}`);
   return n;
+};
+
+const normalizeSafety = (v: string | undefined): 'off' | 'low' | 'high' => {
+  const level = (v ?? '').trim().toLowerCase();
+  if (level === 'off' || level === 'low' || level === 'high') return level;
+  return 'high';
 };
 
 /** 一次性配对码:去掉易混淆字符,8 位足够个人自用场景。 */
@@ -88,6 +114,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // 未显式配置时跟随 MOCK:mock 开发默认放开,真实部署默认关
     devCors: e.DEV_CORS === undefined || e.DEV_CORS.trim() === '' ? mock : isOn(e.DEV_CORS),
     logRequests: e.LOG_REQUESTS?.trim() === '' || e.LOG_REQUESTS === undefined ? true : isOn(e.LOG_REQUESTS),
+    enableWebSearch: e.ENABLE_WEB_SEARCH === undefined || e.ENABLE_WEB_SEARCH.trim() === '' ? true : isOn(e.ENABLE_WEB_SEARCH),
+    enableReadUrl: e.ENABLE_READ_URL === undefined || e.ENABLE_READ_URL.trim() === '' ? true : isOn(e.ENABLE_READ_URL),
+    safetyLevel: normalizeSafety(e.SAFETY_LEVEL),
+    titleEnabled: e.TITLE_ENABLED === undefined || e.TITLE_ENABLED.trim() === '' ? true : isOn(e.TITLE_ENABLED),
+    fileMaxBytes: num(e.FILE_MAX_BYTES, 100 * 1024 * 1024),
+    searchPriceCnyPerCall: num(e.SEARCH_PRICE_CNY_PER_CALL, 5 / 1000),
+    fetchPriceCnyPerCall: num(e.FETCH_PRICE_CNY_PER_CALL, 5 / 1000),
+    ocrPriceCnyPerPage: num(e.OCR_PRICE_CNY_PER_PAGE, 1.5 / 1000),
   };
   if (!config.mock && config.deepseekApiKey === '') {
     throw new Error('未配置 DEEPSEEK_API_KEY。开发阶段请设 MOCK=1,或把 key 写入 server/.env');

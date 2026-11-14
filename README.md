@@ -97,7 +97,9 @@ cd app && flutter analyze && flutter test
 
 | 阶段 | 状态 |
 |---|---|
-| M0 后端骨架 | ✅ 完成(配对/分支/SSE/用量,17 项测试) |
+| M0 后端骨架 | ✅ 完成(配对/分支/SSE/文件/用量) |
 | M1 客户端核心 | ✅ 完成(四页/流式/分支 UI,真机验证) |
-| M2 搜索与文件 | 📋 施工单已出:`docs/HANDOFF-M2.md` |
+| M2 搜索与文件 | ✅ 完成(搜索/读链接卡片、引用角标、PDF 问答、自动标题) |
 | M3 dsh 远程开发桥 → M6 打包发布 | 待排 |
+
+测试规模:server `npm test` 20 项、app `flutter test` 11 项。

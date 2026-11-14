@@ -158,6 +158,8 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 | `/v1/files` | POST | 上传文件(multipart)→ file_id 与解析状态 |
 | `/v1/asr` | POST | 上传录音 → 识别文本 |
 | `/v1/tts` | POST | 文本 → 音频流(mp3) |
+| `/v1/files` | POST | 上传文档(multipart,`?purpose=text_recognition｜rich_layout_recognition｜user_data`)→ file_id(服务端转发 DeepSeek Files API 同步解析) |
+| `/v1/files/{id}` | GET | 文件状态(名称/大小/purpose/解析状态) |
 | `/v1/usage` | GET | 用量与费用统计 |
 
 **`/chat` 的 `parent_message_id` 语义(M0 实现时定稿,客户端 M1 必须一致)**:
@@ -277,8 +279,7 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 |---|---|---|---|
 | M0 后端骨架 | 服务部署、配对认证、DeepSeek 适配层、SSE 事件协议、会话+分支存储 | curl 走通流式对话与分支 | HANDOFF §M0 |
 | M1 客户端核心 | Flutter 四页、流式渲染、分支 UI、基础操作包 | 真机/Chrome 全流程 | HANDOFF §M1 |
-| M2 搜索与文件 | 搜索过程卡片、引用、文件上传解析 | 带 URL 能读网页;传 PDF 能答 | `docs/HANDOFF-M2.md`(已出) |
-| M3 dsh 远程开发桥 | spike→插件→服务器中继→电脑页 | 手机派任务+批准工具调用,任务完成 | §4.4 + 届时另出 |
+| M2 搜索与文件 ✅ | 搜索过程卡片、引用、文件上传解析 | 带 URL 能读网页;传 PDF 能答 | `docs/HANDOFF-M2.md`(完成 2026-11-15) || M3 dsh 远程开发桥 | spike→插件→服务器中继→电脑页 | 手机派任务+批准工具调用,任务完成 | §4.4 + 届时另出 |
 | M4 语音闭环 | ASR/TTS 管道、录音 UI、播放打断、长按朗读 | 全程语音完成一轮问答 | 届时另出 |
 | M5 工具与用量 | memory + http_request + 预算熔断 + 用量看板 | "记住我用 XX,下次直接用"生效 | 届时另出 |
 | M6 打包发布 | APK、HTTPS(备案通过后)、证书锁定、备份脚本 | 手机安装即用 | 届时另出 |
@@ -309,7 +310,11 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-14 | **M1 真机验证通过**:小米 24129PN74C / Android 15 / HyperOS,`adb reverse` 把手机 `localhost:3000` 映射到电脑服务端,debug APK 安装后完成 配对 → 多轮真实对话(「你是谁」「你可以做什么」)→ 临时会话;服务端 `device.last_seen` 与消息均正确落库。注:小米需在开发者选项打开「USB 安装」,`adb shell input` 另需「USB 调试(安全设置)」 |
 | 2026-11-14 | **M2 施工单已出**(`docs/HANDOFF-M2.md`),并**用真实 key 抓包确认了 Chat Completions 下的联网/文件接口形态**(非文档推测):`tools:[{type,name}]`、`safety_check:{level}`、`title:{enabled}` 均可用;新增流式字段 `delta.annotations[].url_citation{url,title,start_index,end_index}`、`delta.server_tool_calls[{index,reasoning_content,calls[{id,type,kind,action,status,sources[]}]}]`、`delta.title`、`choices[0].server_tool_event{type,step}`;`usage` 增加 `prompt_tokens_details.cached_tokens`、`completion_tokens_details.reasoning_tokens/safety_tokens`、`server_tool_use{tool_search,tool_fetch,tool_image_search}`;`finish_reason` 为 `stop`。文件走 `POST /files`(`purpose` 必须在 `file` 之前)→ 对话里用 `{type:"document",source:{type:"file",file_id}}` 引用 |
 
-**当前状态**:M0 + M1 已交付并真机验证;M2 施工单已出、待开工(先做单内 4 条 spike)。
+| 2026-11-15 | **M2 完成**:联网搜索与读链接(服务端工具由 DeepSeek 执行)、搜索/打开网页过程卡片(可展开来源列表)、正文引用角标 `[n]` + 引用列表、文件输入(PDF/Office/图片,`POST /v1/files` 转发 Files API → 对话里以 `file` 块引用)、输入命中审核 → `safety_block`、服务端生成会话标题、usage 按 `model/search/fetch` 分类。**真 key 硬指标实测**:读链接→1 张打开网页卡片 + 1 条引用 + `fetch_calls=1`;联网搜索→5 张卡片(含 14 条搜索结果)+3 条引用 + `search_calls=2`;上传 PDF→答出文档内暗号。`npm test` 20/20、`flutter test` 11/11、`flutter analyze` 0 问题 |
+| 2026-11-15 | **M2 实测坑(重要)**:①Chat Completions 里文件内容块是 `{type:"file",file_id}`(官方文档主体写的是 Messages 的 `document`,照抄会 422);②服务端转发文件时**必须 `Uint8Array.from(buffer)`**,直接 `new Uint8Array(buffer)` 会把 Node 8KB 共享内存池当成文件内容上传,表现为模型回答“文档内容为空”(曾一度误判为“思考模式与文件不兼容”,修正后 thinking+文件正常);③工具计费按查询词条数/成功网页数计次,写入 `usage_log` 的 `search`/`fetch`;④文件解析按页计费但上游响应不含页数,`ocr` 费用暂未计入(已知限制);⑤超时/中断沿用 M0 规则:失败也落库并返回 `message_end` |
+| 2026-11-15 | M2 遗留项(backlog):文件解析费用(ocr)未记账;`deepseek_read_url` 在「思考 + 已声明 web_search」时不会被单独使用(走深度思考搜索的 open_page),该工具声明保留以备关闭思考时用;`/v1/files` 未做病毒扫描与格式深度校验(仅 MIME/扩展名 + 上游解析兜底);文件不落本地(官方不支持下载原件/解析结果) |
+
+**当前状态**:M0 + M1 + M2 已交付并验证(2026-11-15);下一步 M3(dsh 远程开发桥),需先出 M3 施工单并做插件 API spike。
 
 ## 11. 参考资料
 

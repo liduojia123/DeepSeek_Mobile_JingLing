@@ -156,10 +156,12 @@ class ApiClient {
     bool regenerate = false,
     String? parentMessageId,
     bool parentIsRoot = false,
+    List<String>? fileIds,
   }) async* {
     final body = <String, dynamic>{
       'content': ?content,
       if (regenerate) 'regenerate': true,
+      if (fileIds != null && fileIds.isNotEmpty) 'file_ids': fileIds,
     };
     // null 是有意义的取值(挂到根节点),必须显式发送,不能和「未指定」混淆
     if (parentIsRoot) {
@@ -198,6 +200,30 @@ class ApiClient {
     } finally {
       client.close();
     }
+  }
+
+  // ---------- 文件 ----------
+
+  /// 上传文档 → 服务端转发给 DeepSeek Files API 同步解析,成功才返回 file_id。
+  Future<FileUploadResult> uploadFile({
+    required String filename,
+    required List<int> bytes,
+    String purpose = 'text_recognition',
+  }) async {
+    return _guard(() async {
+      final request = http.MultipartRequest('POST', _uri('/v1/files', {'purpose': purpose}))
+        ..headers.addAll(_headers())
+        ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+
+      final client = http.Client();
+      try {
+        final response = await http.Response.fromStream(await client.send(request));
+        final json = _decode(response);
+        return FileUploadResult.fromJson(json);
+      } finally {
+        client.close();
+      }
+    });
   }
 
   // ---------- 用量 ----------

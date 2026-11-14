@@ -61,7 +61,29 @@ CREATE TABLE IF NOT EXISTS usage_log (
   message_id      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_log(ts);
+
+-- M2:上传到 DeepSeek Files API 的文档。原件与解析结果都不在本地留档(官方不支持下载),
+-- 只记引用关系与状态,对话里用 file_id 回指。
+CREATE TABLE IF NOT EXISTS file (
+  id               TEXT PRIMARY KEY,
+  conversation_id  TEXT REFERENCES conversation(id) ON DELETE SET NULL,
+  name             TEXT NOT NULL,
+  mime             TEXT NOT NULL,
+  size             INTEGER NOT NULL DEFAULT 0,
+  purpose          TEXT NOT NULL,
+  provider_file_id TEXT NOT NULL,
+  parse_status     TEXT NOT NULL DEFAULT 'parsed',
+  created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_file_conversation ON file(conversation_id);
 `;
+
+/** 给既有库补列(SQLite 没有 ADD COLUMN IF NOT EXISTS)。 */
+function ensureColumn(db: Database.Database, table: string, column: string, ddl: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((entry) => entry.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
 
 export function openDb(dbPath: string): Db {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
@@ -69,6 +91,8 @@ export function openDb(dbPath: string): Db {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  // M2 新增:assistant 的 server_tool_calls 原始块(含阅读链接的 signature),供下轮回传
+  ensureColumn(db, 'message', 'server_blocks_json', "server_blocks_json TEXT NOT NULL DEFAULT '[]'");
   return db;
 }
 

@@ -32,31 +32,80 @@ class Conversation {
 }
 
 class Citation {
-  const Citation({required this.index, required this.title, required this.url});
+  const Citation({
+    required this.index,
+    required this.title,
+    required this.url,
+    this.startIndex,
+    this.endIndex,
+  });
 
   final int index;
   final String title;
   final String url;
 
+  /// 正文里的字符偏移(相对本轮正文);有值才渲染角标
+  final int? startIndex;
+  final int? endIndex;
+
   factory Citation.fromJson(Map<String, dynamic> json) => Citation(
         index: (json['index'] as num?)?.toInt() ?? 0,
         title: (json['title'] as String?) ?? '',
         url: (json['url'] as String?) ?? '',
+        startIndex: (json['start_index'] as num?)?.toInt(),
+        endIndex: (json['end_index'] as num?)?.toInt(),
       );
 }
 
-/// 工具调用留痕(入参/出参/耗时),M1 只做展示,M2 起会有真实数据。
+class ToolTraceResult {
+  const ToolTraceResult({
+    required this.title,
+    required this.url,
+    this.siteName,
+    this.snippet,
+  });
+
+  final String title;
+  final String url;
+  final String? siteName;
+  final String? snippet;
+
+  factory ToolTraceResult.fromJson(Map<String, dynamic> json) => ToolTraceResult(
+        title: (json['title'] as String?) ?? '',
+        url: (json['url'] as String?) ?? '',
+        siteName: (json['site_name'] as String?) ?? (json['site'] as String?),
+        snippet: json['snippet'] as String?,
+      );
+}
+
+/// 工具调用留痕(入参/出参/耗时),M2 起有真实数据。
 class ToolTrace {
-  const ToolTrace({required this.tool, required this.summary, this.durationMs});
+  const ToolTrace({
+    required this.tool,
+    required this.summary,
+    this.callId,
+    this.status,
+    this.durationMs,
+    this.results = const [],
+  });
 
   final String tool;
   final String summary;
+  final String? callId;
+  final String? status;
   final int? durationMs;
+  final List<ToolTraceResult> results;
 
   factory ToolTrace.fromJson(Map<String, dynamic> json) => ToolTrace(
         tool: (json['tool'] as String?) ?? '',
         summary: (json['summary'] as String?) ?? '',
+        callId: json['call_id'] as String?,
+        status: json['status'] as String?,
         durationMs: (json['duration_ms'] as num?)?.toInt(),
+        results: ((json['results'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((item) => ToolTraceResult.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false),
       );
 }
 
@@ -220,6 +269,39 @@ class ConversationDetail {
     }
     return map;
   }
+}
+
+/// 上传完成的文档引用(服务端 file_id)。
+class FileUploadResult {
+  const FileUploadResult({
+    required this.fileId,
+    required this.name,
+    required this.size,
+    required this.purpose,
+    required this.status,
+  });
+
+  final String fileId;
+  final String name;
+  final int size;
+  final String purpose;
+  final String status;
+
+  factory FileUploadResult.fromJson(Map<String, dynamic> json) => FileUploadResult(
+        fileId: (json['file_id'] as String?) ?? '',
+        name: (json['name'] as String?) ?? '',
+        size: (json['size'] as num?)?.toInt() ?? 0,
+        purpose: (json['purpose'] as String?) ?? 'text_recognition',
+        status: (json['status'] as String?) ?? 'parsed',
+      );
+}
+
+/// 对话里挂着的附件(已上传,待发送)。
+class ChatFile {
+  const ChatFile({required this.id, required this.name});
+
+  final String id;
+  final String name;
 }
 
 class PairResult {

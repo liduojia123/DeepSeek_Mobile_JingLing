@@ -43,7 +43,11 @@ const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 // ---------- 伪造上游:验证真实 HTTP 客户端路径(断流、错误、上下文装配) ----------
 
 interface FakeRequest {
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{
+    role: string;
+    content: unknown;
+    server_tool_calls?: unknown[];
+  }>;
 }
 
 interface FakeUpstream {
@@ -57,6 +61,19 @@ async function startFakeUpstream(
 ): Promise<FakeUpstream> {
   const requests: FakeRequest[] = [];
   const server = createServer((req, res) => {
+    // /files 是文件上传转发:直接回一个 file id,不参与 chat 断言
+    if ((req.url ?? '').includes('/files')) {
+      let size = 0;
+      req.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+      });
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 'file-api-test-1', object: 'file', bytes: size, purpose: 'text_recognition' }));
+      });
+      return;
+    }
+
     let raw = '';
     req.on('data', (chunk: Buffer) => {
       raw += chunk.toString('utf8');
@@ -114,7 +131,7 @@ test('DeepSeek 流式 chunk 归一化为 DPAPP 增量', () => {
   });
   assert.deepEqual(
     normalizeDeepSeekChunk({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 20 } }),
-    { usage: { tokens_in: 10, tokens_out: 20 } },
+    { usage: { tokens_in: 10, tokens_out: 20, tokens_cached: 0, search_calls: 0, fetch_calls: 0 } },
   );
   assert.equal(normalizeDeepSeekChunk({ choices: [{ delta: {} }] }), null);
   assert.equal(normalizeDeepSeekChunk(null), null);
@@ -384,13 +401,20 @@ test('用量统计:chat 后按天汇总 tokens 与费用', async (t) => {
   ).json() as {
     days: Array<{ date: string; calls: number; tokens_in: number; tokens_out: number; cost: number }>;
     totals: { calls: number; tokens_in: number; tokens_out: number; cost: number };
+    by_kind: Array<{ kind: string; calls: number; quantity: number; cost: number }>;
     budget: { daily_cny: number };
   };
 
-  assert.equal(usage.totals.calls, 1);
+  // M2 起 MOCK 假流会演示一次搜索:model 一条 + search 一条
+  assert.equal(usage.totals.calls, 2, JSON.stringify(usage.by_kind));
   assert.ok(usage.totals.tokens_out > 0);
   assert.equal(usage.days.length, 1);
-  assert.equal(usage.days[0].calls, 1);
+  assert.equal(usage.days[0].calls, 2);
+  const modelKind = usage.by_kind.find((entry) => entry.kind === 'model');
+  const searchKind = usage.by_kind.find((entry) => entry.kind === 'search');
+  assert.ok(modelKind, '应有 model 用量');
+  assert.ok(searchKind, 'M2 MOCK 应记录 search 用量');
+  assert.equal(searchKind.quantity, 2, '搜索按查询词条数计次');
   assert.equal(usage.budget.daily_cny, 20);
 });
 
@@ -475,6 +499,8 @@ interface TreeLikeNode {
   id: string;
   role: string;
   blocks: Array<{ type?: string; text?: string }>;
+  citations?: unknown[];
+  tool_traces?: unknown[];
   children: TreeLikeNode[];
 }
 
@@ -764,4 +790,203 @@ test('所有受保护路由都要求 Bearer 令牌', async (t) => {
     const response = await app.inject({ method: route.method, url: route.url });
     assert.equal(response.statusCode, 401, `${route.method} ${route.url} 应要求令牌`);
   }
+});
+
+// ---------- M2:联网工具 / 引用 / 标题 / 多轮回传 / 文件 ----------
+
+const M2_TOOL_CHUNKS = [
+  '{"choices":[{"delta":{"reasoning_content":"先想想"}}]}',
+  JSON.stringify({
+    choices: [{
+      delta: {
+        server_tool_calls: [{
+          index: 0,
+          reasoning_content: '查一下',
+          calls: [{
+            id: 'call-1',
+            type: 'deepseek_web_search',
+            kind: 'search',
+            action: { type: 'search', queries: ['鲸灵是什么', 'JingLing'] },
+            status: 'completed',
+            sources: [{ type: 'url', url: 'https://example.com/a', title: '结果A', site_name: 'example.com', snippet: '摘要A' }],
+          }],
+        }],
+      },
+    }],
+  }),
+  '{"choices":[{"delta":{"content":"基于搜索的回答"}}]}',
+  JSON.stringify({
+    choices: [{
+      delta: {
+        annotations: [{ type: 'url_citation', url_citation: { url: 'https://example.com/a', title: '结果A', start_index: 0, end_index: 8 } }],
+      },
+    }],
+  }),
+  JSON.stringify({ choices: [{ delta: { title: '鲸灵与搜索' } }] }),
+  JSON.stringify({
+    choices: [],
+    usage: {
+      prompt_tokens: 100,
+      completion_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 40 },
+      server_tool_use: { tool_search: 3, tool_fetch: 1 },
+    },
+  }),
+  '[DONE]',
+];
+
+function multipartUpload(filename: string, mime: string, data: Buffer) {
+  const boundary = '----dshTestBoundary';
+  const head = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mime}\r\n\r\n`,
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  return {
+    payload: Buffer.concat([head, data, tail]),
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  };
+}
+
+test('M2:工具调用/引用/标题事件与落库,以及下一轮回传 server_tool_calls', async (t) => {
+  const fake = await startFakeUpstream((_body, res) => writeSse(res, M2_TOOL_CHUNKS));
+  const { app } = fakeHarness(fake);
+  t.after(async () => {
+    await app.close();
+    await fake.close();
+  });
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+
+  const chat = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '鲸灵是什么' },
+    headers,
+  });
+  assert.equal(chat.statusCode, 200);
+
+  const events = parseSseEvents(chat.payload);
+  for (const event of events) {
+    assert.equal(DpappEventSchema.safeParse(event).success, true, `事件不合法: ${JSON.stringify(event)}`);
+  }
+  const toolResult = events.find((event) => event.type === 'tool_result');
+  assert.ok(toolResult, '应有 tool_result 事件');
+  assert.equal((toolResult.results as unknown[]).length, 1);
+  assert.ok(events.some((event) => event.type === 'tool_progress'));
+  const citation = events.find((event) => event.type === 'citation');
+  assert.ok(citation, '应有 citation 事件');
+  assert.equal(citation.start_index, 0);
+  assert.ok(events.some((event) => event.type === 'title' && event.title === '鲸灵与搜索'));
+
+  const end = events.find((event) => event.type === 'message_end');
+  assert.ok(end, '应有 message_end');
+  const usage = end.usage as Record<string, number>;
+  assert.equal(usage.tokens_cached, 40);
+  assert.equal(usage.search_calls, 3);
+  assert.equal(usage.fetch_calls, 1);
+
+  // 落库:标题、引用、工具留痕
+  const detail = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as {
+    title: string;
+    path: string[];
+    tree: TreeLikeNode[];
+  };
+  assert.equal(detail.title, '鲸灵与搜索', '应使用服务端生成的标题');
+  const assistant = findNode(detail.tree, detail.path[1]);
+  assert.equal((assistant?.citations as unknown[] | undefined)?.length, 1);
+  assert.equal((assistant?.tool_traces as unknown[] | undefined)?.length, 1);
+
+  // 第二轮:历史里的 assistant 必须原样回传 server_tool_calls(阅读链接靠它拼回上下文)
+  await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '再问一句' },
+    headers,
+  });
+  const secondRequest = fake.requests[1];
+  assert.ok(secondRequest, '应有第二次上游请求');
+  const replayedAssistant = secondRequest.messages.find((message) => message.role === 'assistant');
+  assert.ok(replayedAssistant, '上下文里应有 assistant 消息');
+  assert.equal((replayedAssistant.server_tool_calls as unknown[] | undefined)?.length, 1);
+});
+
+test('M2:文件上传(multipart)后可在对话里以 file 块引用', async (t) => {
+  const fake = await startFakeUpstream((_body, res) => writeSse(res, M2_TOOL_CHUNKS));
+  const { app } = fakeHarness(fake);
+  t.after(async () => {
+    await app.close();
+    await fake.close();
+  });
+  const headers = auth(await pair(app));
+
+  const upload = multipartUpload('report.pdf', 'application/pdf', Buffer.from('%PDF-1.4 test'));
+  const uploaded = await app.inject({
+    method: 'POST',
+    url: '/v1/files?purpose=text_recognition',
+    payload: upload.payload,
+    headers: { ...headers, ...upload.headers },
+  });
+  assert.equal(uploaded.statusCode, 201, uploaded.payload);
+  const fileId = (uploaded.json() as { file_id: string }).file_id;
+  assert.ok(fileId);
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+  await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '总结这份文档', file_ids: [fileId] },
+    headers,
+  });
+
+  const sent = fake.requests[0];
+  assert.ok(sent, '应有上游请求');
+  const userMessage = sent.messages.find((message) => message.role === 'user');
+  assert.ok(Array.isArray(userMessage?.content), '带文件时 content 应为数组');
+  const parts = userMessage.content as Array<Record<string, unknown>>;
+  const filePart = parts.find((part) => part.type === 'file');
+  assert.ok(filePart, '应有 file 块');
+  assert.equal(filePart.file_id, 'file-api-test-1', '应使用上游 provider file id');
+});
+
+test('M2:文件不存在时返回 400;输入命中审核时发 safety_block 且 stop_reason=refusal', async (t) => {
+  const fake = await startFakeUpstream((_body, res) => {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'Content Exists Risk', type: 'invalid_request_error' } }));
+  });
+  const { app } = fakeHarness(fake);
+  t.after(async () => {
+    await app.close();
+    await fake.close();
+  });
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+
+  const badFile = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '带个不存在的文件', file_ids: ['not-a-file'] },
+    headers,
+  });
+  assert.equal(badFile.statusCode, 400);
+  assert.equal((badFile.json() as { error: { code: string } }).error.code, 'invalid_file');
+
+  const chat = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '一段会被审核拦截的输入' },
+    headers,
+  });
+  assert.equal(chat.statusCode, 200);
+  assert.match(chat.payload, /event: safety_block/);
+  assert.match(chat.payload, /"stop_reason":"refusal"/);
 });
