@@ -128,12 +128,17 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
    电脑不开任何入站端口;插件主动外连
 ```
 
-**插件五项能力假设**(M3 spike 必须逐项验证):
-1. 枚举工作区与会话列表
-2. 订阅会话事件流(文本输出、工具调用)
-3. 注入用户输入(派任务、追问)
-4. **拦截工具调用确认请求**→转发手机→回传批准/拒绝→运行时继续
-5. 发起出站 WebSocket 连接
+**插件五项能力(2026-11-15 已按本机 dsh 源码与真实运行时逐项验证)**:
+
+| 能力 | 真实接口 |
+|---|---|
+| 枚举工作区与会话 | `ctx.workspaceRegistry.list()`;`ctx.sessionQuery.listSessions()`(async,返回 `{header,live,persisted}`) |
+| 订阅会话事件流 | `agent/assistant-stream`(start/chunk/end,chunk 内含 `text-delta`/`reasoning-delta`)、`agent/status`、`agent/error`、`agent/created`、`agent/disposed` |
+| 注入用户输入 | `agent.followup({content,source})` / `agent.steer()` / `agent.cancel({kind:'user'})`;恢复历史会话用 `agents.resume({resumeSessionId})` |
+| **拦截工具调用确认** | `ctx.on('approval/request', answerer)`,返回 `allowed-once`/`rejected`/`cancelled`/`unavailable`,非本插件请求 `next()` 委托;无 answerer 时 fail-closed;请求只有工具名与理由(**无参数**);会话策略为 `never` 时不经过 answerer |
+| 发起出站 WebSocket | Electron 44/Node 24 全局 `WebSocket` 直连,无入站端口 |
+
+实现要点:插件必须以 `dsh.bundle.patch` 形式打包(`package.json`+`cordis.patch.yml`+`apply(ctx,config)`);访问服务用 `ctx.get(name)`(直接 `ctx.xxx` 需 `inject`);热重载会残留旧实例,已加单例守卫 + `stand_down` 协议;真实代码见 `bridge-dsh/` 与 `server/src/routes/harness.ts`。
 
 **Spike 闸门(M3 首日)**:克隆 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness),读 `docs/architecture.md`、`docs/development.md`,对照本机 dsh 实际版本验证上述五项;运行时处于开发者预览期,一切以源码为准。
 

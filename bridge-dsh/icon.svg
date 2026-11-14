@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="鲸灵远程开发桥">
+  <rect width="64" height="64" rx="14" fill="#2F6FED"/>
+  <path d="M14 24h36a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V28a4 4 0 0 1 4-4z" fill="#fff" opacity="0.92"/>
+  <path d="M22 34h12M22 40h20" stroke="#2F6FED" stroke-width="3" stroke-linecap="round"/>
+  <path d="M40 16c6 0 10 4 10 10" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <circle cx="50" cy="26" r="3" fill="#fff"/>
+</svg>

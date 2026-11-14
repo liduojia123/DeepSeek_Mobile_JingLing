@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "JingLing remote bridge",
+    "description": "Forwards this machine's dsh workspaces, sessions, task output, and tool-approval prompts to the JingLing phone app. Configure the JingLing server URL and bridge token first.",
+    "detail": "docs/DETAIL.md"
+  }
+}

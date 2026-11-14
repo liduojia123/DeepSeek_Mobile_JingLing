@@ -38,6 +38,10 @@ export interface Config {
   fetchPriceCnyPerCall: number;
   /** 文档解析单价(元/页):OCR 1.5 元/千页 */
   ocrPriceCnyPerPage: number;
+
+  // ---- M3:dsh 远程开发桥 ----
+  /** 桥接令牌(与设备令牌分离);为空则桥接端点关闭 */
+  bridgeToken: string;
 }
 
 const EnvSchema = z.object({
@@ -65,6 +69,7 @@ const EnvSchema = z.object({
   SEARCH_PRICE_CNY_PER_CALL: z.string().optional(),
   FETCH_PRICE_CNY_PER_CALL: z.string().optional(),
   OCR_PRICE_CNY_PER_PAGE: z.string().optional(),
+  BRIDGE_TOKEN: z.string().optional(),
 });
 
 /** Node 20.12+ 原生 .env 支持,不引入 dotenv 依赖。 */
@@ -126,6 +131,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     searchPriceCnyPerCall: num(e.SEARCH_PRICE_CNY_PER_CALL, 5 / 1000),
     fetchPriceCnyPerCall: num(e.FETCH_PRICE_CNY_PER_CALL, 5 / 1000),
     ocrPriceCnyPerPage: num(e.OCR_PRICE_CNY_PER_PAGE, 1.5 / 1000),
+    bridgeToken: e.BRIDGE_TOKEN?.trim() ?? '',
   };
   if (!config.mock && config.deepseekApiKey === '') {
     throw new Error('未配置 DEEPSEEK_API_KEY。开发阶段请设 MOCK=1,或把 key 写入 server/.env');

@@ -76,6 +76,31 @@ CREATE TABLE IF NOT EXISTS file (
   created_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_file_conversation ON file(conversation_id);
+
+-- M3:dsh 远程开发桥。事件表只存结构化事件(输出/思考增量太碎,只留在内存环形缓冲)
+CREATE TABLE IF NOT EXISTS harness_node (
+  id        TEXT PRIMARY KEY,
+  name      TEXT NOT NULL,
+  platform  TEXT NOT NULL,
+  status    TEXT NOT NULL DEFAULT 'offline',
+  last_seen TEXT
+);
+CREATE TABLE IF NOT EXISTS harness_task (
+  id         TEXT PRIMARY KEY,
+  node_id    TEXT NOT NULL,
+  workspace  TEXT,
+  prompt     TEXT NOT NULL,
+  status     TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS harness_event (
+  id           TEXT PRIMARY KEY,
+  task_id      TEXT NOT NULL REFERENCES harness_task(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  ts           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_harness_event_task ON harness_event(task_id);
 `;
 
 /** 给既有库补列(SQLite 没有 ADD COLUMN IF NOT EXISTS)。 */

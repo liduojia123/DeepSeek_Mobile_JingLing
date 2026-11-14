@@ -1,0 +1,8 @@
+- insert:
+    - id: jingling-bridge
+      name: jingling-bridge
+      config:
+        serverUrl: http://127.0.0.1:3000
+        bridgeToken: ''
+        nodeName: ''
+        confirmTimeoutSec: 15

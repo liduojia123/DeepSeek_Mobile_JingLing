@@ -6,6 +6,7 @@ import { DEV_CORS_HEADERS } from './cors.js';
 import { openDb, purgeEphemeral, type Db } from './db.js';
 import { registerConversationRoutes, GenerationRegistry } from './routes/conversations.js';
 import { registerFileRoutes } from './routes/files.js';
+import { HarnessHub, registerHarnessBridge, registerHarnessRoutes } from './routes/harness.js';
 import { registerUsageRoutes } from './routes/usage.js';
 
 export interface AppContext {
@@ -69,12 +70,17 @@ export function buildApp(
   const pairing = new PairingService(config.pairingCode, { fixed: config.pairingCodeFixed });
   registerPairingRoute(app, db, pairing);
 
+  // M3:dsh 桥接(插件用 bridge token 出站接入,在设备鉴权之外)
+  const harnessHub = new HarnessHub(db, config);
+  registerHarnessBridge(app, harnessHub);
+
   // 除 /health 与 /v1/pair 外的所有路由都要 Bearer 设备令牌
   app.register(async (secured) => {
     secured.addHook('preHandler', makeAuthGuard(db));
     registerConversationRoutes(secured, ctx, registry);
     registerUsageRoutes(secured, ctx);
     await registerFileRoutes(secured, ctx);
+    registerHarnessRoutes(secured, harnessHub, config);
   });
 
   return app;
