@@ -60,8 +60,19 @@ curl -s http://127.0.0.1:3001/health                                # 容器内�
 sudo systemctl reload caddy                                         # 改 Caddy 后重载
 ```
 
-**配对码**:`PAIRING_CODE` 留空 → 每次容器启动自动生成并打印。配对成功后旧码作废、轮换新码。
-查看当前可用的码(最近一次打印):
+**配对码**:两种模式。
+
+- **固定模式(当前生产使用)**:`.env` 里写了 `PAIRING_CODE=<码>` → 码是长期固定的,配对成功后**不轮换**,换手机/重装 App 随时可用。因为等于一个长期密码,服务端带了失败限速:同一来源 60s 内错 5 次后返回 429。
+- **一次性模式**:`PAIRING_CODE` 留空 → 每次启动自动生成并打印,配对成功即轮换作废(更安全,但要 SSH 看日志取码)。
+
+改码/启用一次性模式:
+
+```bash
+sudo sed -i 's/^PAIRING_CODE=.*/PAIRING_CODE=<新码>/' /opt/jingling/.env   # 或删掉该行恢复一次性
+sudo docker compose -f /opt/jingling/docker-compose.yml up -d               # 重启生效(不用 --build)
+```
+
+看当前生效的码:
 
 ```bash
 sudo docker logs jingling-jingling-1 2>&1 | grep 配对码 | tail -1

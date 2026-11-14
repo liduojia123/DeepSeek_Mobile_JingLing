@@ -18,6 +18,8 @@ const PAIRING_CODE = 'TESTCODE';
 function makeHarness(overrides: Partial<Config> = {}): Harness {
   const config: Config = {
     ...loadConfig({ MOCK: '1', PAIRING_CODE } as unknown as NodeJS.ProcessEnv),
+    // 默认按「一次性码」测试轮换行为;固定码模式单独用用例覆盖
+    pairingCodeFixed: false,
     mockDelayMs: 0,
     logRequests: false,
     ...overrides,
@@ -762,6 +764,31 @@ test('dev CORS:SSE 响应在 hijack 后仍带 Access-Control-Allow-Origin;非 de
     headers: prodHeaders,
   });
   assert.equal(list.headers['access-control-allow-origin'], undefined, '非 dev 不应放开 CORS');
+});
+
+test('固定配对码:同码可重复配对且不轮换;连续失败触发 429', async (t) => {
+  const { app } = makeHarness({ pairingCodeFixed: true });
+  t.after(() => app.close());
+
+  for (const name of ['固定设备A', '固定设备B']) {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/pair',
+      payload: { code: PAIRING_CODE, device_name: name },
+    });
+    assert.equal(res.statusCode, 201, `固定码应可重复配对: ${res.payload}`);
+  }
+
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/pair',
+      payload: { code: 'WRONGCODE', device_name: 'x' },
+    });
+    lastStatus = res.statusCode;
+  }
+  assert.equal(lastStatus, 429, '连续错误应被限速');
 });
 
 test('所有受保护路由都要求 Bearer 令牌', async (t) => {

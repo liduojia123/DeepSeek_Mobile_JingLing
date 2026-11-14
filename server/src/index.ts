@@ -66,7 +66,7 @@ export function buildApp(
 
   app.get('/health', async () => ({ ok: true, mock: config.mock }));
 
-  const pairing = new PairingService(config.pairingCode);
+  const pairing = new PairingService(config.pairingCode, { fixed: config.pairingCodeFixed });
   registerPairingRoute(app, db, pairing);
 
   // 除 /health 与 /v1/pair 外的所有路由都要 Bearer 设备令牌
@@ -105,7 +105,7 @@ async function main(): Promise<void> {
   console.log('--------------------------------------------------');
   console.log(`鲸灵服务器已启动  http://${config.host}:${config.port}`);
   console.log(`模式              MOCK=${config.mock ? '1(假流,不调用真实 API)' : '0(真实 DeepSeek)'}`);
-  console.log(`一次性配对码      ${config.pairingCode}`);
+  console.log(`${config.pairingCodeFixed ? '配对码(固定)      ' : '一次性配对码      '}${config.pairingCode}`);
   console.log('配对              POST /v1/pair {"code":"<配对码>","device_name":"我的手机"}');
   console.log('--------------------------------------------------');
 

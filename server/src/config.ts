@@ -10,6 +10,8 @@ export interface Config {
   deepseekBaseUrl: string;
   model: string;
   pairingCode: string;
+  /** 配对码是否由 env 固定(固定则不轮换,等同长期密码;自动生成的是一次性) */
+  pairingCodeFixed: boolean;
   dbPath: string;
   mock: boolean;
   /** MOCK 流每段间隔,便于肉眼观察流式;测试里置 0 */
@@ -95,13 +97,15 @@ export function generatePairingCode(): string {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const e = EnvSchema.parse(env);
   const mock = isOn(e.MOCK);
+  const envPairingCode = e.PAIRING_CODE?.trim() ?? '';
   const config: Config = {
     port: num(e.PORT, 3000),
     host: e.HOST?.trim() || '0.0.0.0',
     deepseekApiKey: e.DEEPSEEK_API_KEY?.trim() ?? '',
     deepseekBaseUrl: e.DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com',
     model: e.DEEPSEEK_MODEL?.trim() || 'deepseek-flash',
-    pairingCode: e.PAIRING_CODE?.trim() || generatePairingCode(),
+    pairingCode: envPairingCode === '' ? generatePairingCode() : envPairingCode,
+    pairingCodeFixed: envPairingCode !== '',
     dbPath: e.DB_PATH?.trim() || './data/jingling.db',
     mock,
     mockDelayMs: num(e.MOCK_DELAY_MS, 25),

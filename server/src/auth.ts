@@ -30,19 +30,39 @@ const PairBody = z.object({
   device_name: z.string().max(64).optional(),
 });
 
+export interface PairingOptions {
+  /** true = 码来自环境变量,是长期固定的,配对成功后不轮换(单人自用场景) */
+  fixed?: boolean;
+  /** 同一来源在窗口内允许的失败次数,超过则 429;默认 5 次 / 60s */
+  maxFailures?: number;
+  failureWindowMs?: number;
+}
+
 /**
- * 一次性配对码:成功配对后立即轮换,旧码作废。
- * 轮换状态只在内存里 —— 重启会换新码并在控制台打印,符合「一次性」语义。
+ * 配对码服务。两种模式:
+ * - 一次性(默认):auto 生成,成功配对即轮换并打印新码
+ * - 固定(环境变量给码):更像「长期密码」,不轮换;因此带失败限速防爆破
  */
 export class PairingService {
   private code: string;
+  private readonly fixed: boolean;
+  private readonly maxFailures: number;
+  private readonly failureWindowMs: number;
+  private readonly failures = new Map<string, { count: number; resetAt: number }>();
 
-  constructor(initialCode: string) {
+  constructor(initialCode: string, options: PairingOptions = {}) {
     this.code = initialCode;
+    this.fixed = options.fixed ?? false;
+    this.maxFailures = options.maxFailures ?? 5;
+    this.failureWindowMs = options.failureWindowMs ?? 60_000;
   }
 
   get current(): string {
     return this.code;
+  }
+
+  get isFixed(): boolean {
+    return this.fixed;
   }
 
   verify(candidate: string): boolean {
@@ -51,9 +71,35 @@ export class PairingService {
     return a.length === b.length && timingSafeEqual(a, b);
   }
 
-  rotate(): string {
+  /** 固定码不轮换;一次性模式返回新码,否则返回 null */
+  rotate(): string | null {
+    if (this.fixed) return null;
     this.code = generatePairingCode();
     return this.code;
+  }
+
+  isLocked(key: string): boolean {
+    const entry = this.failures.get(key);
+    if (!entry) return false;
+    if (Date.now() > entry.resetAt) {
+      this.failures.delete(key);
+      return false;
+    }
+    return entry.count >= this.maxFailures;
+  }
+
+  registerFailure(key: string): void {
+    const now = Date.now();
+    const entry = this.failures.get(key);
+    if (!entry || now > entry.resetAt) {
+      this.failures.set(key, { count: 1, resetAt: now + this.failureWindowMs });
+      return;
+    }
+    entry.count += 1;
+  }
+
+  resetFailures(key: string): void {
+    this.failures.delete(key);
   }
 }
 
@@ -63,13 +109,20 @@ export function registerPairingRoute(
   pairing: PairingService,
 ): void {
   app.post('/v1/pair', async (request, reply) => {
+    const source = request.ip;
+    if (pairing.isLocked(source)) {
+      throw new ApiError(429, 'too_many_attempts', '配对码错误次数过多,请 1 分钟后再试');
+    }
+
     const parsed = PairBody.safeParse(request.body);
     if (!parsed.success) {
       throw new ApiError(400, 'validation_error', '请求体需要 {code, device_name?}');
     }
     if (!pairing.verify(parsed.data.code)) {
+      pairing.registerFailure(source);
       throw new ApiError(401, 'invalid_pairing_code', '配对码错误');
     }
+    pairing.resetFailures(source);
 
     const token = randomBytes(32).toString('base64url');
     const deviceId = randomUUID();
@@ -80,7 +133,11 @@ export function registerPairingRoute(
     ).run(deviceId, name, ts, ts, sha256(token));
 
     const nextCode = pairing.rotate();
-    app.log.info(`设备已配对: ${name}。新配对码: ${nextCode}`);
+    if (nextCode !== null) {
+      app.log.info(`设备已配对: ${name}。新配对码: ${nextCode}`);
+    } else {
+      app.log.info(`设备已配对: ${name}(配对码为固定模式,不轮换)`);
+    }
 
     return reply.code(201).send({ device_id: deviceId, device_name: name, token });
   });

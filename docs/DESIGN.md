@@ -314,7 +314,10 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | **M2 实测坑(重要)**:①Chat Completions 里文件内容块是 `{type:"file",file_id}`(官方文档主体写的是 Messages 的 `document`,照抄会 422);②服务端转发文件时**必须 `Uint8Array.from(buffer)`**,直接 `new Uint8Array(buffer)` 会把 Node 8KB 共享内存池当成文件内容上传,表现为模型回答“文档内容为空”(曾一度误判为“思考模式与文件不兼容”,修正后 thinking+文件正常);③工具计费按查询词条数/成功网页数计次,写入 `usage_log` 的 `search`/`fetch`;④文件解析按页计费但上游响应不含页数,`ocr` 费用暂未计入(已知限制);⑤超时/中断沿用 M0 规则:失败也落库并返回 `message_end` |
 | 2026-11-15 | M2 遗留项(backlog):文件解析费用(ocr)未记账;`deepseek_read_url` 在「思考 + 已声明 web_search」时不会被单独使用(走深度思考搜索的 open_page),该工具声明保留以备关闭思考时用;`/v1/files` 未做病毒扫描与格式深度校验(仅 MIME/扩展名 + 上游解析兜底);文件不落本地(官方不支持下载原件/解析结果) |
 
-**当前状态**:M0 + M1 + M2 已交付并验证(2026-11-15);下一步 M3(dsh 远程开发桥),需先出 M3 施工单并做插件 API spike。
+| 2026-11-15 | **生产环境上线**(M6 部署部分提前):后端容器化部署到腾讯云 `/opt/jingling`(Docker Compose,多阶段构建,只绑 `127.0.0.1:3001`,SQLite 挂卷);Caddy 反代对外 `https://www.example.com:8000/jingling`。**备案未下导致子域名签不出证书**(ACME 只走 80/443,TLS-ALPN 连 443、HTTP-01 连 80,均被 DNSPod 拦截),故复用 www 既有证书 + `handle_path /jingling/*` 剥前缀;备案通过后改回子域名(客户端只需改服务器地址)。同机 spendlens 不受影响。公网实测:健康检查 200、SSE 首事件 67ms(反代 `flush_interval -1` 生效)、真实 usage 落库。运维手册见 `docs/DEPLOY.md` |
+| 2026-11-15 | 配对方式定稿:**生产用固定配对码**(`PAIRING_CODE` 由 env 提供则不轮换,等同长期密码;留空仍是启动生成的一次性码)。配套给 `/v1/pair` 加失败限速(同源 60s 内错 5 次 → 429)。理由:单人自用不需要账号体系(无多用户/找回密码/权限分级),账号反而扩大攻击面;固定码解决"每次取码麻烦"。设备令牌仍是长期凭证(库里只存 sha256),账号密码登录与设备吊销留到 M5 视需要再做 |
+
+**当前状态**:M0 + M1 + M2 已交付并验证;**M2 后端已上线生产**(`https://www.example.com:8000/jingling`,固定配对码模式)。下一步 M3(dsh 远程开发桥)——需先出 M3 施工单并做插件 API spike。
 
 ## 11. 参考资料
 
