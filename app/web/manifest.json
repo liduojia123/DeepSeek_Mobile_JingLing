@@ -1,0 +1,35 @@
+{
+    "name": "鲸灵",
+    "short_name": "鲸灵",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#2F6FED",
+    "theme_color": "#2F6FED",
+    "description": "鲸灵 JingLing —— 你的随身 AI Agent",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

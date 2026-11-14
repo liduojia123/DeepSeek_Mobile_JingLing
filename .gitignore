@@ -15,3 +15,7 @@ app/.flutter-plugins
 app/.flutter-plugins-dependencies
 app/.packages
 app/pubspec.lock
+
+# 本地密钥文件(绝不入库)
+apikey*
+*.key

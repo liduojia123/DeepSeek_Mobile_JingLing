@@ -1,0 +1,308 @@
+/// 会话列表项(GET /v1/conversations)。
+class Conversation {
+  const Conversation({
+    required this.id,
+    required this.title,
+    required this.pinned,
+    required this.ephemeral,
+    required this.activeLeafId,
+    required this.preview,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String title;
+  final bool pinned;
+  final bool ephemeral;
+  final String? activeLeafId;
+  final String preview;
+  final String updatedAt;
+
+  factory Conversation.fromJson(Map<String, dynamic> json) => Conversation(
+        id: json['id'] as String,
+        title: (json['title'] as String?) ?? '',
+        pinned: json['pinned'] == true,
+        ephemeral: json['ephemeral'] == true,
+        activeLeafId: json['active_leaf_id'] as String?,
+        preview: (json['preview'] as String?) ?? '',
+        updatedAt: (json['updated_at'] as String?) ?? '',
+      );
+
+  String get displayTitle => title.trim().isEmpty ? '新对话' : title;
+}
+
+class Citation {
+  const Citation({required this.index, required this.title, required this.url});
+
+  final int index;
+  final String title;
+  final String url;
+
+  factory Citation.fromJson(Map<String, dynamic> json) => Citation(
+        index: (json['index'] as num?)?.toInt() ?? 0,
+        title: (json['title'] as String?) ?? '',
+        url: (json['url'] as String?) ?? '',
+      );
+}
+
+/// 工具调用留痕(入参/出参/耗时),M1 只做展示,M2 起会有真实数据。
+class ToolTrace {
+  const ToolTrace({required this.tool, required this.summary, this.durationMs});
+
+  final String tool;
+  final String summary;
+  final int? durationMs;
+
+  factory ToolTrace.fromJson(Map<String, dynamic> json) => ToolTrace(
+        tool: (json['tool'] as String?) ?? '',
+        summary: (json['summary'] as String?) ?? '',
+        durationMs: (json['duration_ms'] as num?)?.toInt(),
+      );
+}
+
+/// 消息树节点。parent_id 构成分支,children 由服务端返回的树直接填充。
+class MessageNode {
+  MessageNode({
+    required this.id,
+    required this.parentId,
+    required this.role,
+    required this.text,
+    required this.thinking,
+    required this.citations,
+    required this.toolTraces,
+    required this.tokensIn,
+    required this.tokensOut,
+    required this.cost,
+    required this.stopReason,
+    required this.children,
+  });
+
+  final String id;
+  final String? parentId;
+  final String role;
+  final String text;
+  final String thinking;
+  final List<Citation> citations;
+  final List<ToolTrace> toolTraces;
+  final int tokensIn;
+  final int tokensOut;
+  final double cost;
+  final String? stopReason;
+  final List<MessageNode> children;
+
+  bool get isUser => role == 'user';
+  bool get isAssistant => role == 'assistant';
+  bool get isEmptyAssistant => isAssistant && text.trim().isEmpty;
+  bool get interrupted => stopReason == 'interrupted' || stopReason == 'error';
+
+  factory MessageNode.fromJson(Map<String, dynamic> json) {
+    final children = (json['children'] as List?) ?? const [];
+    final usage = (json['usage'] as Map?) ?? const {};
+    return MessageNode(
+      id: json['id'] as String,
+      parentId: json['parent_id'] as String?,
+      role: (json['role'] as String?) ?? 'assistant',
+      text: _blocksToText(json['blocks']),
+      thinking: (json['thinking'] as String?) ?? '',
+      citations: ((json['citations'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => Citation.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false),
+      toolTraces: ((json['tool_traces'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => ToolTrace.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false),
+      tokensIn: (usage['tokens_in'] as num?)?.toInt() ?? 0,
+      tokensOut: (usage['tokens_out'] as num?)?.toInt() ?? 0,
+      cost: (usage['cost'] as num?)?.toDouble() ?? 0,
+      stopReason: json['stop_reason'] as String?,
+      children: children
+          .whereType<Map>()
+          .map((item) => MessageNode.fromJson(Map<String, dynamic>.from(item)))
+          .toList(),
+    );
+  }
+}
+
+String _blocksToText(Object? blocks) {
+  if (blocks is! List) return '';
+  final buffer = StringBuffer();
+  for (final block in blocks) {
+    if (block is Map && block['type'] == 'text' && block['text'] is String) {
+      buffer.write(block['text'] as String);
+    }
+  }
+  return buffer.toString();
+}
+
+/// GET /v1/conversations/{id}:全树 + 活跃路径(根→叶的 id 列表)。
+class ConversationDetail {
+  ConversationDetail({
+    required this.conversation,
+    required this.tree,
+    required this.path,
+  })  : _byId = _index(tree),
+        _childrenByParent = _indexChildren(tree);
+
+  final Conversation conversation;
+  final List<MessageNode> tree;
+
+  /// 根→叶的消息 id;客户端按它渲染线性对话
+  final List<String> path;
+  final Map<String, MessageNode> _byId;
+  final Map<String, List<MessageNode>> _childrenByParent;
+
+  factory ConversationDetail.fromJson(Map<String, dynamic> json) {
+    final conversationJson = Map<String, dynamic>.from(json);
+    conversationJson['preview'] = '';
+    return ConversationDetail(
+      conversation: Conversation.fromJson(conversationJson),
+      tree: ((json['tree'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => MessageNode.fromJson(Map<String, dynamic>.from(item)))
+          .toList(),
+      path: ((json['path'] as List?) ?? const []).whereType<String>().toList(growable: false),
+    );
+  }
+
+  List<MessageNode> get pathNodes =>
+      path.map((id) => _byId[id]).whereType<MessageNode>().toList(growable: false);
+
+  MessageNode? nodeById(String id) => _byId[id];
+
+  /// 同一位置的全部版本(用于 `‹ n/m ›` 切换器)。根节点取森林顶层。
+  List<MessageNode> siblingsOf(String nodeId) {
+    final node = _byId[nodeId];
+    if (node == null) return const [];
+    if (node.parentId == null) return tree;
+    return _childrenByParent[node.parentId!] ?? [node];
+  }
+
+  /// 切到某个兄弟分支时,活跃叶子应落在它子树里最深的那条(取最新的子节点)。
+  String deepestLeafUnder(MessageNode node) {
+    var current = node;
+    while (current.children.isNotEmpty) {
+      current = current.children.last;
+    }
+    return current.id;
+  }
+
+  bool get isEmpty => tree.isEmpty;
+
+  static Map<String, MessageNode> _index(List<MessageNode> tree) {
+    final map = <String, MessageNode>{};
+    void visit(MessageNode node) {
+      map[node.id] = node;
+      for (final child in node.children) {
+        visit(child);
+      }
+    }
+
+    for (final root in tree) {
+      visit(root);
+    }
+    return map;
+  }
+
+  static Map<String, List<MessageNode>> _indexChildren(List<MessageNode> tree) {
+    final map = <String, List<MessageNode>>{};
+    // 必须递归:分支点几乎总是在树中间(用户消息挂在某条助手消息下),
+    // 只索引根节点的 children 会让 `‹ n/m ›` 永远不出现。
+    void visit(MessageNode node) {
+      map[node.id] = node.children;
+      for (final child in node.children) {
+        visit(child);
+      }
+    }
+
+    for (final root in tree) {
+      visit(root);
+    }
+    return map;
+  }
+}
+
+class PairResult {
+  const PairResult({required this.deviceId, required this.deviceName, required this.token});
+
+  final String deviceId;
+  final String deviceName;
+  final String token;
+
+  factory PairResult.fromJson(Map<String, dynamic> json) => PairResult(
+        deviceId: (json['device_id'] as String?) ?? '',
+        deviceName: (json['device_name'] as String?) ?? '',
+        token: (json['token'] as String?) ?? '',
+      );
+}
+
+class UsageDay {
+  const UsageDay({
+    required this.date,
+    required this.calls,
+    required this.tokensIn,
+    required this.tokensOut,
+    required this.cost,
+  });
+
+  final String date;
+  final int calls;
+  final int tokensIn;
+  final int tokensOut;
+  final double cost;
+}
+
+class UsageSummary {
+  const UsageSummary({
+    required this.days,
+    required this.calls,
+    required this.tokensIn,
+    required this.tokensOut,
+    required this.cost,
+  });
+
+  final List<UsageDay> days;
+  final int calls;
+  final int tokensIn;
+  final int tokensOut;
+  final double cost;
+
+  factory UsageSummary.fromJson(Map<String, dynamic> json) {
+    final totals = (json['totals'] as Map?) ?? const {};
+    return UsageSummary(
+      days: ((json['days'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => UsageDay(
+                date: (item['date'] as String?) ?? '',
+                calls: (item['calls'] as num?)?.toInt() ?? 0,
+                tokensIn: (item['tokens_in'] as num?)?.toInt() ?? 0,
+                tokensOut: (item['tokens_out'] as num?)?.toInt() ?? 0,
+                cost: (item['cost'] as num?)?.toDouble() ?? 0,
+              ))
+          .toList(growable: false),
+      calls: (totals['calls'] as num?)?.toInt() ?? 0,
+      tokensIn: (totals['tokens_in'] as num?)?.toInt() ?? 0,
+      tokensOut: (totals['tokens_out'] as num?)?.toInt() ?? 0,
+      cost: (totals['cost'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+/// 让 UI 少写分支:引用列表和工具留痕都可能有事件流里的临时态。
+class StreamingAnswer {
+  const StreamingAnswer({
+    required this.thinking,
+    required this.text,
+    required this.citations,
+    required this.toolTraces,
+  });
+
+  final String thinking;
+  final String text;
+  final List<Citation> citations;
+  final List<ToolTrace> toolTraces;
+
+  static const empty = StreamingAnswer(thinking: '', text: '', citations: [], toolTraces: []);
+
+  bool get hasContent => thinking.trim().isNotEmpty || text.trim().isNotEmpty;
+}

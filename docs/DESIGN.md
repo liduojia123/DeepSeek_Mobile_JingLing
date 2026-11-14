@@ -153,6 +153,7 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 | `/v1/conversations` | GET/POST | 会话列表(置顶分组,排除临时会话)/ 新建(可指定临时) |
 | `/v1/conversations/{id}` | GET/DELETE/PATCH | 详情(全树+活跃叶子)/ 删除 / 置顶·重命名·临时标记·切换活跃叶子 |
 | `/v1/conversations/{id}/chat` | POST | **SSE 流**:普通发送 / `{parent_message_id, content}` 编辑重发 / `{parent_message_id, regenerate:true}` 重新生成 |
+| `/v1/conversations/{id}/messages/{mid}` | DELETE | 删除消息及其整个子树;若删到活跃叶子,`active_leaf_id` 回退到该消息父节点(M1 长按删除用) |
 | `/v1/conversations/{id}/stop` | POST | 中断当前生成 |
 | `/v1/files` | POST | 上传文件(multipart)→ file_id 与解析状态 |
 | `/v1/asr` | POST | 上传录音 → 识别文本 |
@@ -301,8 +302,12 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-14 | M0 实现决策:`usage_log` 增加 `tokens_in/tokens_out/conversation_id/message_id`(在 §5.2 基础上扩展),否则 F9 无法按天/按会话拆分 token;token 单价放 env(`PRICE_IN/OUT_CNY_PER_MTOK`,默认 0.5/2.0 元每百万,**需按官方公告核定**);一次性配对码轮换状态仅在内存,重启即换新码并打印;预算熔断字段只读取不启用(M5 开启) |
 | 2026-11-14 | M0 代码审查后定稿(修复 Critical/Important):①失败/中断也落 assistant 消息(可能空正文)并推进 `active_leaf_id`,杜绝"用户消息不在展示路径上";②助手落库+active_leaf+标题+用量放进同一 SQLite 事务;③加 `UPSTREAM_TIMEOUT_MS`(默认 120s)防止会话永久卡在 generating;④空正文 assistant 不进下一轮上下文;⑤关停时先 abort 在途生成再 close,Docker stop 不再卡死;⑥§5.1 协议冻结(message_start 增加 `user_message_id`、`stop_reason` 三值、`message_end` 为唯一终止事件、data 含 `type`、心跳注释行) |
 | 2026-11-14 | M0 遗留项(进 M1/backlog,非阻塞):消息删除服务端接口(`DELETE /v1/conversations/{id}/messages/{mid}`,约定删子树且 `active_leaf` 落在删除点父节点)——M1 长按"删除"必须先有此接口;会话列表 preview 目前 N+1 查询(个人量级可接受);`/v1/pair` 无速率限制、无令牌吊销接口;`/v1/usage` 按 UTC 日分桶 |
+| 2026-11-14 | **M1 完成**:Flutter 客户端四页(配对/会话列表/对话/设置)+ 流式渲染(思考折叠区→markdown 正文→引用→token 费用)+ 分支 UI(`‹ n/m ›`)+ 长按菜单(复制/编辑重发/重新生成/删除)+ 临时对话入口 + 用量弹窗;`flutter analyze` 0 问题,`flutter test` 7/7,debug APK 构建通过。**已用真实 DeepSeek key 端到端验证**:真实思考增量 → 正文增量 → 真实 usage 落库(示例 38 in / 148 out),自动标题、编辑重发兄弟分支、`‹ n/m ›` 切换、重新生成、停止生成、按天用量均实测通过 |
+| 2026-11-14 | **真实 API 实测结论**(替换文档假设):`model=deepseek-flash` 可用;请求参数 `thinking:{"type":"enabled"}` 与 `stream_options:{"include_usage":true}` 均被接受、不报错;思考内容确实以 `reasoning_content` 增量返回(一次回答 116 个 thinking_delta);`usage` 在末尾 chunk 真实回传。**token 单价仍是占位值**(0.5/2.0 元每百万),估算费用不可用于对账,需按官方公告价更新 env |
+| 2026-11-14 | M1 实现决策:①CORS 从「跟随 MOCK」改为独立 `DEV_CORS` 开关(默认跟随 MOCK),因为用真实 key 时也要 `flutter run -d chrome`,而生产必须为 0;②SSE 端点用 `reply.hijack()` 后 Fastify 的 CORS 头不会自动写入,已显式补上(`src/cors.ts`),否则浏览器整条流被拦(Failed to fetch);③客户端协议层用 `package:http` 流式解析,服务端每 15s 的心跳注释行必须忽略;④`flutter_markdown` 的 `selectable` 会吞掉长按手势,助手消息改为不可选文本 + 显式 `⋯` 菜单按钮兜底 |
+| 2026-11-14 | M1 已知限制:Flutter **Web** 上长按助手正文偶发不触发(桌面浏览器合成指针事件差异),已提供 `⋯` 按钮作为等价入口,真机上需复测长按;**APK 需真机安装验证**(本机无连接设备);`server/.env` 与仓库根的 `apikey.md` 已加入 `.gitignore`,密钥只允许留在本机 |
 
-**当前状态**:M0 已交付(见 §10,2026-11-14),真实 key 复测待补。下一步 M1 客户端核心,按 `docs/HANDOFF-M0-M1.md` §M1 执行。
+**当前状态**:M0 + M1 已交付(见 §10,2026-11-14),真实 DeepSeek key 已验证。下一步 M2(搜索/文件),需先出 M2 施工单。
 
 ## 11. 参考资料
 
