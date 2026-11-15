@@ -326,6 +326,8 @@ export function apply(ctx, config = {}) {
     let sessionId = String(params.session_id ?? '')
     const prompt = params.prompt
     const cwd = params.cwd
+    let presetMounted = false
+    let presetMountError = null
     // session_id 传 '__new__' + cwd = 新建一个会话(默认审批策略 ask,便于手机测试确认卡片)
     let agent
     if (sessionId === '__new__') {
@@ -343,6 +345,16 @@ export function apply(ctx, config = {}) {
       })
       agent = created?.agent ?? created
       sessionId = String(agent?.session?.id ?? '')
+      // Host 层新建的 agent 拿不到 group 隔离域里的 preset,尝试手动挂载(成功则带上完整工具集)
+      const presets = svc('agentPresets')
+      if (presets?.mount && agent?.ctx) {
+        try {
+          await presets.mount(agent.ctx, agentPreset || 'standard')
+          presetMounted = true
+        } catch (error) {
+          presetMountError = String(error?.message ?? error)
+        }
+      }
     } else {
       agent = await ensureAgent(sessionId)
     }
@@ -362,6 +374,8 @@ export function apply(ctx, config = {}) {
       task_id: taskId,
       session_id: sessionId,
       agent_preset: agent?.session?.header?.agentPreset ?? null,
+      preset_mounted: presetMounted,
+      preset_mount_error: presetMountError,
     }
   }
 
@@ -415,6 +429,14 @@ export function apply(ctx, config = {}) {
       case 'unsubscribe':
         dropSubscription(String(params.session_id), params.task_id ? String(params.task_id) : null)
         return { ok: true }
+      case 'debug.presets': {
+        const presets = svc('agentPresets')
+        return {
+          available: typeof presets?.mount === 'function',
+          hasSelect: typeof presets?.select === 'function',
+          keys: presets ? Object.keys(presets).slice(0, 20) : [],
+        }
+      }
       case 'node.info':
         return {
           node_id: nodeId,
