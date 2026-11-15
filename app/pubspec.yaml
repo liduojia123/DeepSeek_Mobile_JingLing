@@ -1,7 +1,7 @@
 name: jingling
 description: "鲸灵 JingLing —— 手机瘦客户端(会话、分支、流式渲染)"
 publish_to: 'none'
-version: 1.0.9+10
+version: 1.0.10+11
 
 environment:
   sdk: ^3.14.0
@@ -16,6 +16,8 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   http: ^1.6.0
   image_picker: ^1.2.4
+  # 直接依赖 markdown:代码块高亮的 builder 签名要 md.Element(原本只是 flutter_markdown 的传递依赖)
+  markdown: ^7.3.1
   material_ui: ^1.1.0
   package_info_plus: ^10.2.2
   path_provider: ^2.1.6

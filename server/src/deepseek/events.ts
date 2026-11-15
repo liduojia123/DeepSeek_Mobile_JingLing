@@ -83,6 +83,11 @@ export const FileAttachedEvent = z.object({
 export const SafetyBlockEvent = z.object({
   type: z.literal('safety_block'),
   reason: z.string(),
+  /**
+   * input = 用户输入被上游内容审核拦截(400 Content Exists Risk),正文通常为空;
+   * output = 模型自己在正文里拒答(服务端启发式识别),正文保留、只打标识。
+   */
+  source: z.enum(['input', 'output']).default('input'),
 });
 
 /** 服务端生成会话标题(开启 title 时);客户端用来更新标题栏与列表 */
@@ -101,7 +106,10 @@ export const MessageEndEvent = z.object({
     fetch_calls: z.number().int().nonnegative().default(0),
   }),
   cost_estimate: z.number().nonnegative(),
-  /** refusal 仅用于输入被内容审核拦截(M2 spike 结论),输出侧拒答是普通正文 */
+  /**
+   * refusal = 命中内容安全。source 见同轮 safety_block:
+   * 输入拦截时正文为空,输出侧拒答时正文是模型自己的拒答话术。
+   */
   stop_reason: z.enum(['end_turn', 'interrupted', 'error', 'refusal']),
 });
 

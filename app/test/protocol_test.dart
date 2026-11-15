@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jingling/core/sse_client.dart';
 import 'package:jingling/models/events.dart';
+import 'package:jingling/models/models.dart';
 
 /// 协议层回归:SSE 切包鲁棒性 + 与 server/src/deepseek/events.ts 的字段同步。
 void main() {
@@ -127,6 +128,54 @@ void main() {
         'stop_reason': 'refusal',
       })! as MessageEndEvent;
       expect(end.stopReason, 'refusal');
+    });
+
+    test('safety_block 带 source:区分输入被拦与模型拒答', () {
+      final input = DpappEvent.fromJson({
+        'type': 'safety_block',
+        'reason': '输入内容未通过安全审核',
+      })! as SafetyBlockEvent;
+      expect(input.source, 'input', reason: '老服务端不带 source 时按 input 处理');
+
+      final output = DpappEvent.fromJson({
+        'type': 'safety_block',
+        'reason': '模型以内容安全为由拒答',
+        'source': 'output',
+      })! as SafetyBlockEvent;
+      expect(output.source, 'output');
+      expect(output.reason, contains('拒答'));
+    });
+
+    test('MessageNode 解析落库的 safety 标识(历史消息也带拒答标记)', () {
+      final node = MessageNode.fromJson({
+        'id': 'm1',
+        'parent_id': 'u1',
+        'role': 'assistant',
+        'blocks': [
+          {'type': 'text', 'text': '抱歉,我无法提供这类信息。'},
+        ],
+        'thinking': '',
+        'citations': <Object>[],
+        'tool_traces': <Object>[],
+        'usage': {'tokens_in': 3, 'tokens_out': 9, 'cost': 0.001},
+        'stop_reason': 'refusal',
+        'safety': {'source': 'output', 'reason': '模型以内容安全为由拒答'},
+        'children': <Object>[],
+      });
+      expect(node.safety, isNotNull);
+      expect(node.safety!.isOutput, isTrue);
+      expect(node.text, contains('无法提供'));
+
+      final plain = MessageNode.fromJson({
+        'id': 'm2',
+        'parent_id': null,
+        'role': 'assistant',
+        'blocks': [
+          {'type': 'text', 'text': '正常回答'},
+        ],
+        'children': <Object>[],
+      });
+      expect(plain.safety, isNull);
     });
   });
 }

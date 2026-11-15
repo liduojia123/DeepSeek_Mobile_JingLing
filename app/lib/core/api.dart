@@ -233,6 +233,26 @@ class ApiClient {
     });
   }
 
+  // ---------- 设备(令牌吊销) ----------
+
+  Future<List<Device>> devices() async {
+    final json = await _guard(() async =>
+        _decode(await _client.get(_uri('/v1/devices'), headers: _headers())));
+    return ((json['devices'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((item) => Device.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
+
+  /// 吊销一台设备的令牌(立即生效,设备下次请求即 401)。
+  Future<void> revokeDevice(String id) async {
+    await _guard(() async {
+      final response = await _client.delete(_uri('/v1/devices/$id'), headers: _headers());
+      _expectNoContent(response);
+      return null;
+    });
+  }
+
   // ---------- 用量 ----------
 
   Future<UsageSummary> usage({int days = 30}) async {

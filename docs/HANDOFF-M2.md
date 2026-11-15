@@ -82,6 +82,8 @@
 
 另:上传成功的响应形如 `{id:"file-api-…", object:"file", bytes, created_at, filename, purpose}`,无解析状态字段(解析是同步的,成功才返回 id)。
 
+> **2026-11-15 补充(v1.0.10)**:第 2 条结论不变(上游仍无结构化拒答信号),但已在服务端用启发式识别补上「输出侧拒答」标识(`safety_block.source="output"` + `message.safety_json` 落库),正文照常展示。判据与真实 fixture 见 `DESIGN.md` §10 与 `server/src/agent/safety.ts`。
+
 ## 1. Spike 闸门(M2 第一天,先做后写)
 
 四条里任何一条结论不同,先改本文件再动代码:

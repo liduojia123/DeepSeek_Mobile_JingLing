@@ -1,8 +1,8 @@
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/models.dart';
 import 'branch_switcher.dart';
+import 'markdown_view.dart';
 import 'thinking_block.dart';
 
 /// 用户本地回显气泡:发送后、服务端返回树之前占位。
@@ -80,7 +80,7 @@ class StreamingAnswerBubble extends StatelessWidget {
               ],
             )
           else if (answer.text.isNotEmpty)
-            MarkdownBody(data: markCitations(answer.text, answer.citations)),
+            ChatMarkdown(data: markCitations(answer.text, answer.citations)),
         ],
       ),
     );
@@ -157,11 +157,14 @@ class MessageBubble extends StatelessWidget {
             children: [
               if (node.thinking.trim().isNotEmpty) ThinkingBlock(text: node.thinking),
               for (final trace in node.toolTraces) ToolTraceCard(trace: trace),
+              if (node.safety != null) _SafetyBadge(safety: node.safety!),
               if (node.text.trim().isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   child: Text(
-                    node.interrupted ? '（已中断，没有产生正文）' : '（空回答）',
+                    node.interrupted
+                        ? '（已中断，没有产生正文）'
+                        : (node.safety != null ? '（内容未通过安全审核）' : '（空回答）'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       fontStyle: FontStyle.italic,
@@ -172,7 +175,7 @@ class MessageBubble extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   // 不能开 selectable:选中文字会吞掉长按手势,长按菜单(复制/重新生成/删除)就出不来
-                  child: MarkdownBody(data: markCitations(node.text, node.citations)),
+                  child: ChatMarkdown(data: markCitations(node.text, node.citations)),
                 ),
               if (node.citations.isNotEmpty) _CitationList(citations: node.citations),
               if (node.interrupted)
@@ -319,6 +322,47 @@ class _ToolTraceCardState extends State<ToolTraceCard> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 内容安全标识:输入被拦截 / 模型自己拒答(正文照常显示,只加一枚小标识)。
+class _SafetyBadge extends StatelessWidget {
+  const _SafetyBadge({required this.safety});
+
+  final SafetyFlag safety;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.error;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Tooltip(
+        message: safety.reason,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.shield_outlined, size: 14, color: color),
+              const SizedBox(width: 6),
+              Text(
+                safety.isOutput ? '模型拒答' : '内容安全拦截',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

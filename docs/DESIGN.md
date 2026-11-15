@@ -160,6 +160,8 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 | `/v1/conversations/{id}/chat` | POST | **SSE 流**:普通发送 / `{parent_message_id, content}` 编辑重发 / `{parent_message_id, regenerate:true}` 重新生成 |
 | `/v1/conversations/{id}/messages/{mid}` | DELETE | 删除消息及其整个子树;若删到活跃叶子,`active_leaf_id` 回退到该消息父节点(M1 长按删除用) |
 | `/v1/conversations/{id}/stop` | POST | 中断当前生成 |
+| `/v1/devices` | GET | 已配对设备列表(标出当前设备) |
+| `/v1/devices/{id}` | DELETE | 吊销设备令牌(立即失效;吊销本机 = 强制把自己踢下线) |
 | `/v1/files` | POST | 上传文件(multipart)→ file_id 与解析状态 |
 | `/v1/asr` | POST | 上传录音 → 识别文本 |
 | `/v1/tts` | POST | 文本 → 音频流(mp3) |
@@ -187,7 +189,7 @@ event: tool_result       {tool, summary, results:[{title,url,site?}...]}
 event: text_delta        {text}
 event: citation          {index, url, title}
 event: file_attached     {file_id, name, status}                # status: pending|parsed|failed
-event: safety_block      {reason}
+event: safety_block      {reason, source}                       # source: input|output(input=输入被审核拦截;output=模型拒答)
 event: message_end       {usage:{tokens_in,out}, cost_estimate, stop_reason}
 event: error             {code, message}
 ```
@@ -197,7 +199,8 @@ event: error             {code, message}
 - 每行格式 `event: <type>` + `data: <JSON>`,块以空行分隔;**`data` 的 JSON 里也带 `type` 字段**,两份信息一致,客户端可用任一解析。
 - 服务端每 15s 发一行注释 `: ping`,**客户端必须忽略以 `:` 开头的行**(SSE 规范注释,不是数据)。
 - **`message_end` 永远是流的终止事件**;`error` 只表示"本轮失败",其后仍会收到 `message_end`(`stop_reason:"error"`),客户端不用把 `error` 当终止信号。
-- `stop_reason` 取值:`end_turn`(正常)/ `interrupted`(用户 stop 或客户端断连)/ `error`(上游失败或超时)。
+- `stop_reason` 取值:`end_turn`(正常)/ `interrupted`(用户 stop 或客户端断连)/ `error`(上游失败或超时)/ `refusal`(命中内容安全)。
+- `refusal` 的两种来源看同轮的 `safety_block.source`:`input` = 用户输入被上游审核拦截(正文通常为空);`output` = 模型自己在正文里拒答(正文保留,服务端通过启发式识别,并在 `message.safety_json` 落库,历史消息也带标识)。
 - **失败/中断也会落库**:服务端会把已收到的部分内容(可能为空)存成一条 assistant 消息并推进 `active_leaf_id`,所以客户端收到 `error`/`interrupted` 后刷新会话一定能看到当轮用户消息,不会"消失";空正文的 assistant 消息在组装下一轮上下文时会被服务端过滤掉。
 - 中断或上游失败时拿不到真实 usage,`usage` 与 `cost_estimate` 是按字符数估算值(用于用量看板,不用于计费对账)。
 
@@ -347,3 +350,6 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | 语音交互形态(最终) | 不做按条「语音转文字」(输入法已具备);语音以**聊天页内联**方式提供:输入框左侧麦克风开启/退出连续语音模式,状态条只占一行,不遮挡对话与回答;以此替代全屏语音层 |
 
 | 2026-11-15 | 拍照提问(G3 提前) | 聊天页输入框新增相机按钮:`image_picker` 拍照 → `POST /v1/files` 解析 → 有文字就附加,没文字直接把图片当问题发送(服务端放宽「content 不能为空」为「content 或 file_ids 至少一个」)。坑:`image_picker_android` 的 lint 与 AGP/JDK 组合会崩 → release 关闭 `lintVital`(不影响 flutter analyze) |
+
+| 2026-11-15 | **v1.0.10 收口三项** | ①**代码语法高亮**:自研轻量 tokenizer(关键字/字符串/注释/数字,按语言给词表,`pre` 块用 flutter_markdown 的 builder 换成带语言标签+复制按钮的代码块),不引入 flutter_highlight/highlight —— 那类库会把上百种语言语法打进 APK,而这里只需要给模型输出的常见代码上色;新增直接依赖 `markdown`(原本是 flutter_markdown 的传递依赖,只为拿 `md.Element` 类型,不增加包体)。②**输出侧拒答结构化标识**:上游实测无结构化信号(2026-11-14 结论仍成立),改为服务端启发式识别(短答 ≤400 字 + 开头 80 字内 + 真实拒答话术模式),命中时发 `safety_block{source:"output"}` 且 `stop_reason=refusal`,正文照常下发,**标识落库** `message.safety_json` 供历史回放;输入侧仍映射上游 400 `Content Exists Risk`(`source:"input"`)。③**设备令牌吊销**:`GET /v1/devices` + `DELETE /v1/devices/{id}`,吊销 = `token_hash` 换成 `revoked:<id>`(永不命中 sha256)+ 记 `revoked_at`,设备行保留留痕;手机端设置 →「设备管理」可吊销任意设备(含本机,吊销本机即回到配对页) |
+| 2026-11-15 | 拒答启发式的真实 fixture | 真实 key 实测(2026-11-15)拒答开场白形如「这个我不能写。」「这个我也不会教。」「这个我没法帮你写。」——谓语是任意动作,所以模式不能只列几个动词;这两条原文已写进 `server/test/smoke.test.ts` 作为回归 fixture。已知限制:改写得很客气的拒答、纯英文长拒答可能漏判(漏判只是不打标识,正文照常显示);启发式只影响标识,不影响内容 |

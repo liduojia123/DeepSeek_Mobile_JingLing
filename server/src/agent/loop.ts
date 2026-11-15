@@ -3,6 +3,7 @@ import { streamChatCompletion, UpstreamError, type ChatMessage } from '../deepse
 import type { ChatDelta, CitationPayload, DpappEvent, ToolCall, ToolCallBlock } from '../deepseek/events.js';
 import { mockStream } from '../deepseek/mock.js';
 import type { Db } from '../db.js';
+import { detectOutputRefusal, type SafetyFlag } from './safety.js';
 import { clientToolSpecs, executeClientTool, type ClientToolCall } from './tools.js';
 
 export interface ToolTrace {
@@ -35,7 +36,8 @@ export interface AgentTurnResult {
   cost: number;
   stopReason: 'end_turn' | 'interrupted' | 'error' | 'refusal';
   errorMessage?: string;
-  safetyBlocked: boolean;
+  /** 命中内容安全时的标识(input=输入被拦,output=模型拒答);普通回答为 null */
+  safety: SafetyFlag | null;
   title?: string;
   citations: CitationPayload[];
   toolTraces: ToolTrace[];
@@ -120,7 +122,7 @@ export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnRe
   let thinkingClosed = false;
   let stopReason: AgentTurnResult['stopReason'] = 'end_turn';
   let errorMessage: string | undefined;
-  let safetyBlocked = false;
+  let safety: SafetyFlag | null = null;
   let title: string | undefined;
 
   const citations: CitationPayload[] = [];
@@ -264,7 +266,7 @@ export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnRe
         errorMessage = '模型响应超时,请重试';
       } else if (error instanceof UpstreamError && error.statusCode === 400 && /Content Exists Risk/i.test(error.detail)) {
         stopReason = 'refusal';
-        safetyBlocked = true;
+        safety = { source: 'input', reason: '输入内容未通过安全审核' };
         errorMessage = '输入内容未通过安全审核';
       } else if (error instanceof DOMException && error.name === 'AbortError') {
         stopReason = 'interrupted';
@@ -352,6 +354,16 @@ export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnRe
     tokensOut = estimateTokens(text);
   }
 
+  // 输出侧拒答:上游没有结构化信号,靠启发式识别;正文保留,只把 stop_reason 标成 refusal
+  // 让客户端在历史里也能看到「模型拒答」标识。
+  if (stopReason === 'end_turn' && safety === null) {
+    const refusal = detectOutputRefusal(text);
+    if (refusal !== null) {
+      safety = refusal;
+      stopReason = 'refusal';
+    }
+  }
+
   closeThinking();
 
   return {
@@ -366,7 +378,7 @@ export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnRe
     cost: 0,
     stopReason,
     errorMessage,
-    safetyBlocked,
+    safety,
     title,
     citations,
     toolTraces,

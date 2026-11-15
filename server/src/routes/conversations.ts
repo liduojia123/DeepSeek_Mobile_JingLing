@@ -32,6 +32,7 @@ interface MessageRow {
   tool_traces_json: string;
   server_blocks_json: string;
   tool_blocks_json: string;
+  safety_json: string | null;
   tokens_in: number;
   tokens_out: number;
   cost: number;
@@ -49,6 +50,7 @@ interface TreeNode {
   tool_traces: unknown;
   usage: { tokens_in: number; tokens_out: number; cost: number };
   stop_reason: string | null;
+  safety: unknown;
   created_at: string;
   children: TreeNode[];
 }
@@ -417,7 +419,7 @@ export function registerConversationRoutes(
         cost: 0,
         stopReason: 'error',
         errorMessage: '模型服务暂时不可用,请稍后重试',
-        safetyBlocked: false,
+        safety: null,
         citations: [],
         toolTraces: [],
         serverBlocks: [],
@@ -445,10 +447,11 @@ export function registerConversationRoutes(
             message: result.errorMessage ?? '模型服务暂时不可用,请稍后重试',
           });
         }
-        if (result.safetyBlocked) {
+        if (result.safety !== null) {
           writeEvent({
             type: 'safety_block',
-            reason: result.errorMessage ?? '输入内容未通过安全审核',
+            reason: result.safety.reason,
+            source: result.safety.source,
           });
         }
 
@@ -465,6 +468,7 @@ export function registerConversationRoutes(
             toolTraces: result.toolTraces,
             serverBlocks: result.serverBlocks,
             toolBlocks: result.toolBlocks,
+            safety: result.safety,
             tokensIn: result.tokensIn,
             tokensOut: result.tokensOut,
             cost: result.cost,
@@ -573,6 +577,7 @@ interface InsertMessageParams {
   toolTraces?: unknown;
   serverBlocks?: unknown;
   toolBlocks?: unknown;
+  safety?: unknown;
   tokensIn?: number;
   tokensOut?: number;
   cost?: number;
@@ -583,8 +588,9 @@ function insertMessage(db: Db, params: InsertMessageParams): void {
   db.prepare(
     `INSERT INTO message
        (id, conversation_id, parent_id, role, blocks_json, thinking, citations_json,
-        tool_traces_json, server_blocks_json, tool_blocks_json, tokens_in, tokens_out, cost, stop_reason, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tool_traces_json, server_blocks_json, tool_blocks_json, safety_json,
+        tokens_in, tokens_out, cost, stop_reason, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     params.id,
     params.conversationId,
@@ -596,6 +602,7 @@ function insertMessage(db: Db, params: InsertMessageParams): void {
     JSON.stringify(params.toolTraces ?? []),
     JSON.stringify(params.serverBlocks ?? []),
     JSON.stringify(params.toolBlocks ?? []),
+    params.safety === undefined || params.safety === null ? null : JSON.stringify(params.safety),
     params.tokensIn ?? 0,
     params.tokensOut ?? 0,
     params.cost ?? 0,
@@ -781,6 +788,7 @@ function buildTree(rows: MessageRow[]): TreeNode[] {
       tool_traces: parseJson(row.tool_traces_json, []),
       usage: { tokens_in: row.tokens_in, tokens_out: row.tokens_out, cost: row.cost },
       stop_reason: row.stop_reason,
+      safety: row.safety_json === null ? null : parseJson(row.safety_json, null),
       created_at: row.created_at,
       children: [],
     });

@@ -143,7 +143,35 @@ export function registerPairingRoute(
   });
 }
 
-const DEVICE_LOOKUP = 'SELECT id FROM device WHERE token_hash = ?';
+/**
+ * 设备管理(吊销)。令牌只存 sha256,所以"吊销"= 把 token_hash 换成一个永远不可能
+ * 撞上真实 sha256 的值(带 `revoked:` 前缀),并记 revoked_at 留痕;
+ * 不删行,设备列表与审计还能看出这台机器来过。
+ */
+export function registerDeviceRoutes(app: FastifyInstance, db: Db): void {
+  app.get('/v1/devices', async (request) => {
+    const rows = db
+      .prepare(
+        `SELECT id, name, paired_at, last_seen FROM device
+          WHERE revoked_at IS NULL ORDER BY last_seen DESC`,
+      )
+      .all() as Array<{ id: string; name: string; paired_at: string; last_seen: string | null }>;
+    return {
+      devices: rows.map((row) => ({ ...row, current: row.id === request.deviceId })),
+    };
+  });
+
+  app.delete('/v1/devices/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = db
+      .prepare('UPDATE device SET token_hash = ?, revoked_at = ? WHERE id = ? AND revoked_at IS NULL')
+      .run(`revoked:${id}`, nowIso(), id);
+    if (result.changes === 0) throw new ApiError(404, 'device_not_found', '设备不存在或已吊销');
+    return reply.code(204).send();
+  });
+}
+
+const DEVICE_LOOKUP = 'SELECT id FROM device WHERE token_hash = ? AND revoked_at IS NULL';
 const DEVICE_TOUCH = 'UPDATE device SET last_seen = ? WHERE id = ?';
 
 /** 所有受保护路由的 preHandler:校验 Bearer 设备令牌,只比对 sha256。 */

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/providers.dart';
 import '../core/update.dart';
 import 'computer_page.dart';
+import 'devices_page.dart';
 import 'memory_page.dart';
 import 'usage_page.dart';
 
@@ -263,6 +264,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             title: const Text('检查更新'),
             subtitle: Text(_versionLabel.isEmpty ? '从服务器下载新版本并安装(免插线)' : '当前 $_versionLabel · 从服务器下载并安装'),
             onTap: _checkUpdate,
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.smartphone_outlined),
+            title: const Text('设备管理'),
+            subtitle: const Text('查看已配对设备、吊销丢失设备的令牌'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const DevicesPage()),
+            ),
           ),
           const Divider(height: 32),
           Text('服务器', style: theme.textTheme.titleSmall),

@@ -503,6 +503,7 @@ interface TreeLikeNode {
   blocks: Array<{ type?: string; text?: string }>;
   citations?: unknown[];
   tool_traces?: unknown[];
+  safety?: { source?: string; reason?: string } | null;
   children: TreeLikeNode[];
 }
 
@@ -1183,4 +1184,159 @@ test('M5 记忆管理接口:列表/搜索/删除', async () => {
   assert.equal(removed.statusCode, 200);
   const after = await app.inject({ method: 'GET', url: '/v1/memories', headers });
   assert.equal((after.json() as { total: number }).total, 0);
+});
+
+// ---------- 收口:设备令牌吊销 ----------
+
+test('设备吊销:列表标出本机,吊销后旧令牌立即 401,且不再出现在列表里', async (t) => {
+  const { app } = makeHarness({ pairingCodeFixed: true });
+  t.after(() => app.close());
+
+  const tokenA = await pair(app);
+  const tokenB = await pair(app);
+  const headersA = auth(tokenA);
+  const headersB = auth(tokenB);
+
+  const list = await app.inject({ method: 'GET', url: '/v1/devices', headers: headersA });
+  assert.equal(list.statusCode, 200);
+  const devices = (list.json() as { devices: Array<{ id: string; name: string; current: boolean }> }).devices;
+  assert.equal(devices.length, 2, '两台设备都应出现');
+  assert.equal(devices.filter((device) => device.current).length, 1, '只有本机被标成 current');
+  const other = devices.find((device) => !device.current)!;
+
+  const revoked = await app.inject({ method: 'DELETE', url: `/v1/devices/${other.id}`, headers: headersA });
+  assert.equal(revoked.statusCode, 204);
+
+  const blocked = await app.inject({ method: 'GET', url: '/v1/conversations', headers: headersB });
+  assert.equal(blocked.statusCode, 401, '被吊销设备的令牌必须立刻失效');
+
+  const afterList = await app.inject({ method: 'GET', url: '/v1/devices', headers: headersA });
+  assert.deepEqual(
+    (afterList.json() as { devices: Array<{ id: string }> }).devices.map((device) => device.id).length,
+    1,
+  );
+
+  // 重复吊销 / 不存在的设备 → 404,不能静默成功
+  assert.equal(
+    (await app.inject({ method: 'DELETE', url: `/v1/devices/${other.id}`, headers: headersA })).statusCode,
+    404,
+  );
+
+  // 吊销自己同样允许(换手机/丢手机时用),此后本机令牌也 401
+  const self = devices.find((device) => device.current)!;
+  assert.equal((await app.inject({ method: 'DELETE', url: `/v1/devices/${self.id}`, headers: headersA })).statusCode, 204);
+  assert.equal((await app.inject({ method: 'GET', url: '/v1/conversations', headers: headersA })).statusCode, 401);
+});
+
+// ---------- 收口:输出侧拒答标识 ----------
+
+test('输出侧拒答识别:真实上游的拒答话术能命中,长回答与正文中段的表态不误判', async () => {
+  const { detectOutputRefusal } = await import('../src/agent/safety.js');
+
+  // 2026-11-15 真实 key 实测的拒答原文(开头)
+  assert.deepEqual(
+    detectOutputRefusal(
+      '这个我没法帮你写。\n\n冒充银行客服骗取短信验证码属于典型的电信诈骗手段——验证码是账户的最后一道防线,拿到验证码基本等于拿到账户控制权。这类话术无论用于"测试"还是别的理由,我都不提供。',
+    ),
+    { source: 'output', reason: '模型以内容安全为由拒答' },
+  );
+  assert.deepEqual(
+    detectOutputRefusal(
+      '这个我不能写。冒充银行客服骗取短信验证码属于电信诈骗，是明确的违法犯罪行为（涉嫌诈骗罪、侵犯公民个人信息等），无论用于“测试”还是其他用途，我都不提供这类话术。',
+    ),
+    { source: 'output', reason: '模型以内容安全为由拒答' },
+  );
+  assert.equal(
+    detectOutputRefusal(
+      '这个我也不能教。撬开邻居家的门锁属于非法侵入住宅/盗窃，是刑事犯罪，无论出于什么理由（好奇、忘记带钥匙、想验证安全性）我都不提供开锁技术指导。',
+    )?.source,
+    'output',
+  );
+  assert.equal(detectOutputRefusal('这个我也不会教。撬开邻居家的门锁,不管动机是什么,都属于非法侵入住宅。')?.source, 'output');
+  assert.deepEqual(detectOutputRefusal('抱歉,我无法提供这类信息。'), {
+    source: 'output',
+    reason: '模型以内容安全为由拒答',
+  });
+  assert.equal(detectOutputRefusal("I'm sorry, but I can't help with that.")?.source, 'output');
+  // 真实正常回答(含代码)不能误判
+  assert.equal(detectOutputRefusal('可以,这是你要的代码:\n```dart\nvoid main() {}\n```'), null);
+  // 长回答里转述「我无法提供」不算拒答
+  assert.equal(detectOutputRefusal(`${'这是一个正常的长回答。'.repeat(60)}我无法提供这类信息`), null);
+  // 表态在开头 80 字之外出现也不算拒答(拒答都是开门见山,而不是聊到一半才转折)
+  const lateRefusal = `${'这是一段与安全策略无关的正常内容。'.repeat(8)}我无法提供这类信息。`;
+  assert.equal(detectOutputRefusal(lateRefusal), null);
+  assert.equal(detectOutputRefusal(''), null);
+});
+
+test('输出侧拒答:发 safety_block(source=output) + stop_reason=refusal,正文仍然保留并落库', async (t) => {
+  const refusalText = '这个我不能写。冒充客服骗取验证码属于诈骗,我不提供这类话术。';
+  const fake = await startFakeUpstream((_body, res) => {
+    writeSse(res, [
+      `{"choices":[{"delta":{"content":"${refusalText}"}}]}`,
+      '{"choices":[{"delta":{},"finish_reason":"stop"}]}',
+      '{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":9}}',
+      '[DONE]',
+    ]);
+  });
+  const { app } = fakeHarness(fake);
+  t.after(async () => {
+    await app.close();
+    await fake.close();
+  });
+  const headers = auth(await pair(app));
+
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+  const chat = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '帮我做一件不该做的事' },
+    headers,
+  });
+  assert.equal(chat.statusCode, 200);
+
+  const events = parseSseEvents(chat.payload);
+  const safety = events.find((event) => event.type === 'safety_block');
+  assert.ok(safety, '应发 safety_block');
+  assert.equal(safety.source, 'output');
+  assert.match(String(safety.reason), /拒答/);
+  assert.equal(events.at(-1)?.stop_reason, 'refusal', 'message_end 的 stop_reason 应是 refusal');
+  assert.ok(events.some((event) => event.type === 'text_delta'), '正文照常下发,不做隐藏');
+
+  const detail = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as { tree: TreeLikeNode[] };
+  const assistant = findNode(detail.tree, String(events[0]!.message_id))!;
+  assert.equal(assistant.blocks.map((block) => block.text ?? '').join(''), refusalText);
+  assert.deepEqual(assistant.safety, { source: 'output', reason: '模型以内容安全为由拒答' });
+});
+
+test('普通回答不会被误标成拒答:没有 safety_block,safety 落库为 null', async (t) => {
+  const fake = await startFakeUpstream(happySse);
+  const { app } = fakeHarness(fake);
+  t.after(async () => {
+    await app.close();
+    await fake.close();
+  });
+  const headers = auth(await pair(app));
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+
+  const chat = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '打个招呼' },
+    headers,
+  });
+  const events = parseSseEvents(chat.payload);
+  assert.equal(events.some((event) => event.type === 'safety_block'), false);
+  assert.equal(events.at(-1)?.stop_reason, 'end_turn');
+
+  const detail = (
+    await app.inject({ method: 'GET', url: `/v1/conversations/${convId}`, headers })
+  ).json() as { tree: TreeLikeNode[] };
+  const assistant = findNode(detail.tree, String(events[0]!.message_id))!;
+  assert.equal(assistant.safety, null);
 });

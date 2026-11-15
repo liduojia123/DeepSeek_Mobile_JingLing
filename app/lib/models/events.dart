@@ -87,7 +87,10 @@ sealed class DpappEvent {
           status: _asString(json['status']) ?? 'pending',
         );
       case 'safety_block':
-        return SafetyBlockEvent(reason: _asString(json['reason']) ?? '');
+        return SafetyBlockEvent(
+          reason: _asString(json['reason']) ?? '',
+          source: _asString(json['source']) ?? 'input',
+        );
       case 'message_end':
         return MessageEndEvent(
           usage: DpappUsage.fromJson(_asMap(json['usage'])),
@@ -213,8 +216,13 @@ final class FileAttachedEvent extends DpappEvent {
 }
 
 final class SafetyBlockEvent extends DpappEvent {
-  const SafetyBlockEvent({required this.reason});
+  const SafetyBlockEvent({required this.reason, this.source = 'input'});
+
   final String reason;
+
+  /// input = 用户输入被上游审核拦截(正文通常为空);
+  /// output = 模型自己在正文里拒答(正文保留,客户端只打标识)
+  final String source;
 }
 
 /// 服务端生成的会话标题(开启 title 时)

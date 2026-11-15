@@ -31,6 +31,21 @@ class Conversation {
   String get displayTitle => title.trim().isEmpty ? '新对话' : title;
 }
 
+/// 内容安全标识(input=输入被拦截 / output=模型拒答),由服务端启发式识别后下发并落库。
+class SafetyFlag {
+  const SafetyFlag({required this.source, required this.reason});
+
+  final String source;
+  final String reason;
+
+  bool get isOutput => source == 'output';
+
+  factory SafetyFlag.fromJson(Map<String, dynamic> json) => SafetyFlag(
+        source: (json['source'] as String?) ?? 'input',
+        reason: (json['reason'] as String?) ?? '',
+      );
+}
+
 class Citation {
   const Citation({
     required this.index,
@@ -124,6 +139,7 @@ class MessageNode {
     required this.cost,
     required this.stopReason,
     required this.children,
+    this.safety,
   });
 
   final String id;
@@ -138,6 +154,9 @@ class MessageNode {
   final double cost;
   final String? stopReason;
   final List<MessageNode> children;
+
+  /// 命内容安全时的结构化标识(普通回答为 null);output 表示模型自己拒答
+  final SafetyFlag? safety;
 
   bool get isUser => role == 'user';
   bool get isAssistant => role == 'assistant';
@@ -165,6 +184,9 @@ class MessageNode {
       tokensOut: (usage['tokens_out'] as num?)?.toInt() ?? 0,
       cost: (usage['cost'] as num?)?.toDouble() ?? 0,
       stopReason: json['stop_reason'] as String?,
+      safety: json['safety'] is Map
+          ? SafetyFlag.fromJson(Map<String, dynamic>.from(json['safety'] as Map))
+          : null,
       children: children
           .whereType<Map>()
           .map((item) => MessageNode.fromJson(Map<String, dynamic>.from(item)))
@@ -269,6 +291,33 @@ class ConversationDetail {
     }
     return map;
   }
+}
+
+/// 已配对设备(GET /v1/devices)。令牌只在配对时出现一次,这里拿不到任何令牌。
+class Device {
+  const Device({
+    required this.id,
+    required this.name,
+    required this.pairedAt,
+    required this.current,
+    this.lastSeen,
+  });
+
+  final String id;
+  final String name;
+  final String pairedAt;
+  final String? lastSeen;
+
+  /// 是否是当前这台手机的设备记录
+  final bool current;
+
+  factory Device.fromJson(Map<String, dynamic> json) => Device(
+        id: (json['id'] as String?) ?? '',
+        name: (json['name'] as String?) ?? '',
+        pairedAt: (json['paired_at'] as String?) ?? '',
+        lastSeen: json['last_seen'] as String?,
+        current: json['current'] == true,
+      );
 }
 
 /// 上传完成的文档引用(服务端 file_id)。

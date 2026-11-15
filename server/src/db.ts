@@ -129,6 +129,10 @@ export function openDb(dbPath: string): Db {
   // M2 新增:assistant 的 server_tool_calls 原始块(含阅读链接的 signature),供下轮回传
   ensureColumn(db, 'message', 'server_blocks_json', "server_blocks_json TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, 'message', 'tool_blocks_json', "tool_blocks_json TEXT NOT NULL DEFAULT '[]'");
+  // 拒答标识:{"source":"input"|"output","reason":"…"},NULL 表示没命中安全策略
+  ensureColumn(db, 'message', 'safety_json', 'safety_json TEXT');
+  // 设备吊销时间(非空即已吊销,token_hash 同时被换成不可能命中的值)
+  ensureColumn(db, 'device', 'revoked_at', 'revoked_at TEXT');
   return db;
 }
 

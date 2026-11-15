@@ -255,6 +255,8 @@ class ChatController extends Notifier<ChatState> {
     );
 
     String? failure;
+    // 本轮 safety_block 的来源:output 表示模型自己拒答(正文还在,不弹错误横幅)
+    var safetySource = '';
     try {
       await for (final event in api.chat(
         conversationId: conversationId,
@@ -305,14 +307,19 @@ class ChatController extends Notifier<ChatState> {
             state = state.copyWith(title: title);
           case DpappErrorEvent(:final message):
             failure = message;
-          case SafetyBlockEvent(:final reason):
-            failure = '内容安全拦截:$reason';
+          case SafetyBlockEvent(:final reason, :final source):
+            safetySource = source;
+            if (source == 'output') {
+              state = state.copyWith(info: '模型拒答:$reason');
+            } else {
+              failure = '内容安全拦截:$reason';
+            }
           case MessageEndEvent(:final stopReason):
             if (stopReason == 'interrupted') {
               state = state.copyWith(info: '已停止生成');
             } else if (stopReason == 'error') {
               failure ??= '本轮生成失败';
-            } else if (stopReason == 'refusal') {
+            } else if (stopReason == 'refusal' && safetySource != 'output') {
               failure ??= '内容未通过安全审核';
             }
           default:
