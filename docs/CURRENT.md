@@ -5,8 +5,8 @@
 
 ## 一、版本与发布
 
-- App 版本:**1.1.0+12**(versionCode=12)
-- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.1.0)
+- App 版本:**1.1.1+13**(versionCode=13)
+- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.1.1)
 - 服务器 OTA:`/opt/jingling/data/app/jingling.apk` + `release.json`(version_code 必须递增)
 - 手机端「设置 → 更新来源」可选 **自己的服务器 / GitHub Releases**;「检查更新」按所选来源比对
 - 发布纪律见 `AGENTS.md`「发布纪律」:改版本号 → 测试 → 构建 → commit/push → `gh release create` → 同步服务器 OTA
@@ -25,6 +25,7 @@
 | 增值 | ✅ OTA(双来源)、拍照提问、相册多选(≤6)、联网/深度思考开关、Markdown 流式渲染 |
 | v1.0.10 收口 | ✅ 代码块语法高亮(14 种语言+复制)、输出侧拒答标识(`safety_block.source=output`,落库)、设备令牌吊销(设置→设备管理) |
 | v1.1.0 会话级桥接 | ✅ 手机进电脑上同一个 dsh 会话:同一份历史+实时、跑的时候「插话」、结束「接着说」、手机新建会话、断线按 seq 续传 |
+| v1.1.1 检查更新修复 | ✅ 「检查更新」不再静默失败:区分有新版本/已是最新/查询失败,失败弹窗带原因+当前版本+来源;GitHub 侧补超时/限流/无资产原因 |
 
 ## 三、下一步候选(按建议顺序)
 
@@ -39,7 +40,7 @@
 - 仓库:`D:\DPAPP`(`server/` `app/` `bridge-dsh/` `docs/` `deploy/`)
 - Flutter:`D:\dev\flutter`;JDK:`D:\dev\jdk-17`;Android SDK:`D:\dev\android-sdk`
 - 构建:`cd app; flutter build apk --release --target-platform android-arm64`
-- 测试:`cd server; npm test`(34 条)/ `cd app; flutter analyze` + `flutter test`(28 条)
+- 测试:`cd server; npm test`(34 条)/ `cd app; flutter analyze` + `flutter test`(32 条)
 - 注意:`server` 的测试入口用 tsx(会 spawn esbuild 服务进程),受限沙箱里会 EPERM,需要正常权限运行
 - 发布签名:`app/android/key.properties` + `jingling-release.jks`(均不入库)
 - **密钥/服务器凭据在仓库外**:`D:\dev\deploy\`(`keystore-info.txt`、设备令牌、发布脚本);生产 `server/.env` 在服务器 `/opt/jingling/.env`
@@ -60,6 +61,8 @@
 11. **cordis 事件默认按上下文过滤**:插件 ctx 收不到本地用户会话的 `session/event`,必须 `ctx.on(name, cb, {global:true})`;M3 的 agent 事件之所以"看起来能用",是因为那些 agent 是插件自己建的
 12. **改插件后必须重启 dsh** 才生效(热重载会残留旧实例);M3.5 之后还要在 dsh 里确认 `~/.dsh/jingling-bridge.json` 指向的服务器已部署新版本
 13. 会话流有两个序号:服务器 `seq`(手机续传用)和 dsh `dsh_seq`(去重用),混用会出现重复消息
+14. **不要再让「检查更新」返回可空值**:失败与「已是最新」混成 null 会静默失败(v1.1.1 修的就是这个)。新代码用 `UpdateCheck`(available / upToDate / failed),失败必须带原因
+15. 用 sealed class 的 `switch` 给 late final 局部变量赋值会触发 Dart VM linearstack 崩溃(`error: unreachable code`,Gradle 报 `compileFlutterBuildRelease` 失败)→ 改成 `if (x is …)` + 可空局部变量
 
 ## 六、验证过的生产事实
 
