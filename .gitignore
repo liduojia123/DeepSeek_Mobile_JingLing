@@ -29,6 +29,10 @@ apikey*
 server/.env.production
 .deploy/*.env
 
+# 临时调试文件与会话日志(绝不入库)
+.tmp-*
+.acl-reports/
+
 # M6 release 签名(绝不入库)
 *.jks
 *.keystore
