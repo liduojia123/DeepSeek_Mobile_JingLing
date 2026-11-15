@@ -343,3 +343,5 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | M6+ OTA | 应用内更新:服务器发布目录放 `jingling.apk` + `release.json`,App 比对 versionCode 后下载并交系统安装器(FileProvider + REQUEST_INSTALL_PACKAGES);不引入第三方安装插件。开发期仍需 adb 装首次版本,之后走 OTA |
 
 | 2026-11-15 | 连续语音 | 手机输入法自带 STT,按条语音输入价值低 → 改为连续语音模式(免按住、自动断句、自动播报、可手动打断);VAD 用录音音量阈值,未做回声消除式自动 barge-in |
+
+| 2026-11-15 | 语音交互形态(最终) | 不做按条「语音转文字」(输入法已具备);语音以**聊天页内联**方式提供:输入框左侧麦克风开启/退出连续语音模式,状态条只占一行,不遮挡对话与回答;以此替代全屏语音层 |

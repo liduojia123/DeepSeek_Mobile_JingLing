@@ -13,7 +13,6 @@ import '../core/voice_session.dart';
 import '../models/models.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_menu.dart';
-import '../widgets/voice_overlay.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key, required this.conversationId});
@@ -29,8 +28,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final ScrollController _scroll = ScrollController();
   final VoiceService _voice = VoiceService();
   bool _autoSpeak = true;
-  bool _recording = false;
-  bool _transcribing = false;
   bool _speaking = false;
 
   @override
@@ -76,18 +73,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   /// 朗读一段文字(先停掉上一段,保证可打断)。
-  /// 打开「语音模式」:免按住连续对话(聆听→自动断句→回答→播报→继续听)。
-  Future<void> _openVoiceMode() async {
-    await _voice.stop();
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        fullscreenDialog: true,
-        builder: (_) => const VoiceOverlay(),
-      ),
-    );
-  }
-
   Future<void> _speak(String text) async {
     final api = ref.read(apiProvider);
     if (api == null || text.trim().isEmpty) return;
@@ -104,42 +89,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  Future<void> _startRecording() async {
-    if (ref.read(chatProvider).generating) return;
-    await _voice.stop();
-    final started = await _voice.startRecording();
-    if (!mounted) return;
-    setState(() => _recording = started);
-    if (!started) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('麦克风不可用或未授权,请在系统设置里允许鲸灵录音')),
-      );
-    }
-  }
-
-  Future<void> _stopRecordingAndTranscribe() async {
-    if (!_recording) return;
-    setState(() => _recording = false);
-    final bytes = await _voice.stopRecording();
-    if (bytes == null) return;
-    setState(() => _transcribing = true);
-    try {
-      final text = await ref.read(apiProvider)!.transcribe(bytes);
-      if (!mounted) return;
-      if (text.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('没有识别到内容,再说一次？')));
-        return;
-      }
-      _input.text = text.trim();
-      _input.selection = TextSelection.collapsed(offset: _input.text.length);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已转成文字,确认后点发送')));
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
-    } finally {
-      if (mounted) setState(() => _transcribing = false);
-    }
-  }
   Future<void> _pickFile() async {
     try {
       final file = await FilePicker.pickFile(
@@ -268,11 +217,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       appBar: AppBar(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          IconButton(
-            tooltip: '语音模式(免按住连续对话)',
-            onPressed: _openVoiceMode,
-            icon: const Icon(Icons.graphic_eq),
-          ),
+
           if (_speaking)
             IconButton(
               tooltip: '停止朗读',
@@ -368,7 +313,75 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
+  /// 语音模式状态条:不遮住对话,只占输入框上方一行。
+  Widget _buildVoiceStatus(VoiceSessionState voice, ThemeData theme) {
+    final label = switch (voice.stage) {
+      VoiceStage.listening => voice.heard ? '我在听,说完停顿一下' : '我在听…请说话',
+      VoiceStage.recognizing => '正在识别…',
+      VoiceStage.thinking => '正在思考…',
+      VoiceStage.speaking => '正在播报,点「打断」可插话',
+      VoiceStage.error => voice.error ?? '语音出错了',
+      VoiceStage.idle => '',
+    };
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            switch (voice.stage) {
+              VoiceStage.listening => Icons.mic,
+              VoiceStage.recognizing => Icons.graphic_eq,
+              VoiceStage.thinking => Icons.psychology_outlined,
+              VoiceStage.speaking => Icons.volume_up,
+              _ => Icons.error_outline,
+            },
+            size: 16,
+            color: theme.colorScheme.error,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall,
+            ),
+          ),
+          if (voice.stage == VoiceStage.listening)
+            SizedBox(
+              width: 48,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: voice.volume.clamp(0.0, 1.0),
+                  minHeight: 4,
+                  color: theme.colorScheme.error,
+                  backgroundColor: theme.colorScheme.errorContainer,
+                ),
+              ),
+            ),
+          if (voice.stage == VoiceStage.speaking)
+            TextButton(
+              onPressed: () => ref.read(voiceSessionProvider.notifier).interrupt(),
+              child: const Text('打断'),
+            ),
+          IconButton(
+            tooltip: '退出语音模式',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => ref.read(voiceSessionProvider.notifier).stop(),
+            icon: const Icon(Icons.close, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
   Widget _buildComposer(ChatState chat, ThemeData theme) {
+    final voice = ref.watch(voiceSessionProvider);
     return SafeArea(
       top: false,
       child: Container(
@@ -421,50 +434,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ],
             ),
             const SizedBox(height: 6),
-            if (_recording || _transcribing)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Icon(
-                      _recording ? Icons.mic : Icons.graphic_eq,
-                      size: 16,
-                      color: _recording ? theme.colorScheme.error : theme.colorScheme.primary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _recording ? '正在录音…松开或再点一次结束' : '正在识别语音…',
-                      style: theme.textTheme.labelSmall,
-                    ),
-                  ],
-                ),
-              ),
+            if (voice.active) _buildVoiceStatus(voice, theme),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // 语音:按住说话(松开结束),或点一下开始/再点结束。
-                // 注意这里不能用 IconButton:它的 InkWell 会吞掉长按手势。
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: chat.generating || _transcribing
-                      ? null
-                      : () {
-                          if (_recording) {
-                            _stopRecordingAndTranscribe();
-                          } else {
-                            _startRecording();
-                          }
-                        },
-                  onLongPressStart:
-                      chat.generating || _transcribing ? null : (_) => _startRecording(),
-                  onLongPressEnd:
-                      chat.generating || _transcribing ? null : (_) => _stopRecordingAndTranscribe(),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Icon(
-                      _recording ? Icons.mic : Icons.mic_none,
-                      color: _recording ? theme.colorScheme.error : null,
-                    ),
+                // 语音模式:点一下开始连续对话(免按住),再点退出
+                IconButton(
+                  tooltip: voice.active ? '退出语音模式' : '语音模式(免按住对话)',
+                  onPressed: () async {
+                    if (voice.active) {
+                      await ref.read(voiceSessionProvider.notifier).stop();
+                    } else {
+                      await _voice.stop();
+                      await ref.read(voiceSessionProvider.notifier).start();
+                    }
+                  },
+                  icon: Icon(
+                    voice.active ? Icons.mic : Icons.mic_none,
+                    color: voice.active ? theme.colorScheme.error : null,
                   ),
                 ),
                 IconButton(
