@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jingling/models/models.dart';
 import 'package:jingling/widgets/code_block.dart';
 import 'package:jingling/widgets/markdown_view.dart';
+import 'package:jingling/widgets/message_bubble.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// 代码块高亮:tokenizer 分类正确、不吞掉普通文本、语言标记不影响渲染安全。
@@ -72,6 +74,62 @@ void main() {
         ),
       );
       expect(find.byType(CodeBlock), findsNothing);
+    });
+  });
+
+  group('MessageBubble 拒答标识', () {
+    MessageNode assistant(Map<String, dynamic> extra) => MessageNode.fromJson({
+          'id': 'm1',
+          'parent_id': 'u1',
+          'role': 'assistant',
+          'blocks': [
+            {'type': 'text', 'text': '这个我不能写。'},
+          ],
+          'thinking': '',
+          'citations': <Object>[],
+          'tool_traces': <Object>[],
+          'usage': {'tokens_in': 1, 'tokens_out': 2, 'cost': 0},
+          'children': <Object>[],
+          ...extra,
+        });
+
+    Widget wrap(MessageNode node) => MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: MessageBubble(
+                node: node,
+                position: 1,
+                count: 1,
+                onBranchSelected: (_) {},
+                onLongPress: () {},
+              ),
+            ),
+          ),
+        );
+
+    testWidgets('模型拒答:显示「模型拒答」,正文照常显示', (tester) async {
+      await tester.pumpWidget(wrap(assistant({
+        'stop_reason': 'refusal',
+        'safety': {'source': 'output', 'reason': '模型以内容安全为由拒答'},
+      })));
+      expect(find.text('模型拒答'), findsOneWidget);
+      expect(find.textContaining('这个我不能写'), findsOneWidget);
+    });
+
+    testWidgets('输入被拦截:显示「内容安全拦截」,空正文给出说明', (tester) async {
+      await tester.pumpWidget(wrap(assistant({
+        'blocks': <Object>[],
+        'stop_reason': 'refusal',
+        'safety': {'source': 'input', 'reason': '输入内容未通过安全审核'},
+      })));
+      expect(find.text('内容安全拦截'), findsOneWidget);
+      expect(find.textContaining('内容未通过安全审核'), findsOneWidget);
+    });
+
+    testWidgets('普通回答没有拒答标识', (tester) async {
+      await tester.pumpWidget(wrap(assistant({'stop_reason': 'end_turn'})));
+      expect(find.text('模型拒答'), findsNothing);
+      expect(find.text('内容安全拦截'), findsNothing);
     });
   });
 }
