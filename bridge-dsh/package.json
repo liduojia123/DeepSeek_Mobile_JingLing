@@ -1,6 +1,6 @@
 {
   "name": "jingling-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "鲸灵 JingLing 远程开发桥:把本机 dsh 会话/任务/工具调用确认转发到手机",
   "type": "module",
@@ -23,3 +23,4 @@
     }
   }
 }
+
