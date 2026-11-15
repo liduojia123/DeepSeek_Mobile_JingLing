@@ -11,6 +11,7 @@ class SecureStore {
   static const String _serverUrlKey = 'jingling.server_url';
   static const String _tokenKey = 'jingling.device_token';
   static const String _autoSpeakKey = 'jingling.auto_speak';
+  static const String _updateSourceKey = 'jingling.update_source';
 
   Future<String> readServerUrl() async {
     final value = await _storage.read(key: _serverUrlKey);
@@ -24,6 +25,16 @@ class SecureStore {
   }
 
   /// 自动朗读回答(默认开)。
+  /// OTA 更新来源:'server'(默认)或 'github'。
+  Future<String> readUpdateSource() async {
+    final value = await _storage.read(key: _updateSourceKey);
+    return value == 'github' ? 'github' : 'server';
+  }
+
+  Future<void> writeUpdateSource(String source) async {
+    await _storage.write(key: _updateSourceKey, value: source == 'github' ? 'github' : 'server');
+  }
+
   Future<bool> readAutoSpeak() async {
     final value = await _storage.read(key: _autoSpeakKey);
     if (value == null) return true;

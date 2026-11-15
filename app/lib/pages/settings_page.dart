@@ -16,6 +16,7 @@ class SettingsPage extends ConsumerStatefulWidget {
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   String _versionLabel = '';
+  UpdateSource _updateSource = UpdateSource.server;
   final TextEditingController _serverUrl = TextEditingController();
   bool _saving = false;
 
@@ -25,6 +26,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final url = ref.read(settingsProvider).value?.serverUrl;
       if (url != null && mounted) _serverUrl.text = url;
+      UpdateService.readSource().then((source) {
+        if (mounted) setState(() => _updateSource = source);
+      });
       UpdateService.currentVersion().then((version) {
         if (mounted) setState(() => _versionLabel = 'v${version.name}+${version.code}');
       });
@@ -50,7 +54,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final api = ref.read(apiProvider);
     if (api == null) return;
     final messenger = ScaffoldMessenger.of(context);
-    final latest = await UpdateService.check(api);
+    final latest = await UpdateService.check(api, _updateSource);
     if (!mounted) return;
     if (latest == null) {
       messenger.showSnackBar(const SnackBar(content: Text('已是最新版本')));
@@ -107,7 +111,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     try {
       final path = await UpdateService.download(
         api,
-        release: latest,
+        info: latest,
         onProgress: (value) => progress.value = value,
       );
       if (!mounted) return;
@@ -212,6 +216,46 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onTap: () => ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('打开任一会话,使用输入框左侧麦克风;朗读开关在会话右上角')),
             ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.cloud_download_outlined),
+            title: const Text('更新来源'),
+            subtitle: Text(
+              _updateSource == UpdateSource.github ? 'GitHub Releases(公开)' : '自己的服务器(默认)',
+            ),
+            onTap: () async {
+              final picked = await showDialog<UpdateSource>(
+                context: context,
+                builder: (dialogContext) => SimpleDialog(
+                  title: const Text('选择更新来源'),
+                  children: [
+                    SimpleDialogOption(
+                      onPressed: () => Navigator.pop(dialogContext, UpdateSource.server),
+                      child: const ListTile(
+                        leading: Icon(Icons.dns_outlined),
+                        title: Text('自己的服务器'),
+                        subtitle: Text('由你控制,速度稳定'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    SimpleDialogOption(
+                      onPressed: () => Navigator.pop(dialogContext, UpdateSource.github),
+                      child: const ListTile(
+                        leading: Icon(Icons.code),
+                        title: Text('GitHub Releases'),
+                        subtitle: Text('公开,海外网络可能更慢'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+              if (picked == null) return;
+              await UpdateService.writeSource(picked);
+              if (!mounted) return;
+              setState(() => _updateSource = picked);
+            },
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,
