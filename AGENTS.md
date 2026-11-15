@@ -36,6 +36,28 @@
 - 开发与测试优先 `MOCK=1`;真实 `DEEPSEEK_API_KEY` 由用户提供,写入 `server/.env`(该文件不入库)
 - 提交前:`npm test`(server)与 `flutter analyze`(app)零报错
 
+## 发布纪律(每完成一版必做)
+
+一个"版本"= 一个里程碑,或一批用户可感知的功能改动。做完即发布,不留着攒:
+
+1. **版本号**:改 `app/pubspec.yaml` 的 `version: x.y.z+N`。`N` 是 versionCode,**必须比上一版大**,OTA 靠它比对;漏加会导致手机端「检查更新」永远显示已是最新
+2. **验证**:`cd server && npm test` 全绿、`cd app && flutter analyze` 零 issue、`cd app && flutter test` 通过(见上节验证纪律)
+3. **构建**:`cd app && flutter build apk --release`。签名用 `app/android/key.properties` + `app/android/jingling-release.jks`(两者不入库,丢了只能换签名重装)
+4. **推送源码**:`git commit` 后 `git push origin main`
+5. **发版**:把 APK 复制成 `build-release/jingling-<版本>.apk`,写 `build-release/notes-<版本>.md`(本版改动 / 安装方式 / 文件大小 / SHA-256),再:
+   ```bash
+   gh release create v<版本> build-release/jingling-<版本>.apk \
+     --title "鲸灵 v<版本>" --notes-file build-release/notes-<版本>.md --target main
+   ```
+6. **APK 不入库**:`build-release/` 已 gitignore,安装包只走 Releases,避免每次 19MB 灌进 git 历史
+7. **服务器 OTA 同步**:把同一 APK 传到服务器 `/opt/jingling/data/app/jingling.apk` 并改 `release.json` 的 versionCode,否则手机端 OTA 拿不到新版
+
+上传前自检(仓库是**公开**的,这一步不可省):
+
+- `git log --all -p | Select-String 'sk-'` 与 `git grep -I -E 'sk-[A-Za-z0-9]{16,}'` 均为 0
+- 无 `apikey.md`、`生产环境.md`、`server/.env`、`*.jks`、`key.properties`、`.tmp-*` 会话日志入库
+- 无内网地址/服务器 IP 写进代码或文档(UI 占位符用的 `192.168.1.x` 可以)
+
 ## 安全红线
 
 - `DEEPSEEK_API_KEY` 只允许出现在 `server/.env` 与服务器环境变量,**绝不进入代码、git 历史、客户端代码、日志**
