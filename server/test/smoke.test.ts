@@ -1203,7 +1203,11 @@ interface FakePlugin {
 }
 
 /** 用 Node 自带的 WebSocket 客户端假装成 dsh 插件,验证服务端的会话级中继。 */
-async function startFakePlugin(port: number, token: string): Promise<FakePlugin> {
+async function startFakePlugin(
+  port: number,
+  token: string,
+  options: { outdated?: boolean } = {},
+): Promise<FakePlugin> {
   const WS = (globalThis as unknown as { WebSocket: new (url: string) => FakePlugin['ws'] }).WebSocket;
   const ws = new WS(`ws://127.0.0.1:${port}/v1/harness/bridge?token=${token}`);
   const rpcCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -1238,6 +1242,14 @@ async function startFakePlugin(port: number, token: string): Promise<FakePlugin>
       if (waiter.method !== method) continue;
       waiters.splice(waiters.indexOf(waiter), 1);
       waiter.resolve(params);
+    }
+    // outdated:模拟"电脑上还没重启 dsh、插件是旧版"的行为(不认会话级方法)
+    const sessionLevel = method.startsWith('session.') || method === 'input.send' || method === 'session.create';
+    if (options.outdated === true && sessionLevel) {
+      ws.send(
+        JSON.stringify({ type: 'rpc-result', id: message.id, ok: false, error: `未知方法: ${method}` }),
+      );
+      return;
     }
     let result: Record<string, unknown> = {};
     switch (method) {
@@ -1468,6 +1480,41 @@ test('M3.5 新会话与权限:手机建会话走插件 session.create,权限可�
   });
   assert.equal(state.statusCode, 200);
   assert.equal((state.json() as { permission: string }).permission, 'danger-full-access');
+});
+
+test('M3.5 旧版插件:输入返回 409 bridge_outdated,会话流给出「重启 dsh」提示', async (t) => {
+  const { app } = makeHarness({ bridgeToken: 'test-bridge-token' });
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const port = (app.server.address() as { port: number }).port;
+  const plugin = await startFakePlugin(port, 'test-bridge-token', { outdated: true });
+  await plugin.ready;
+  t.after(async () => {
+    await plugin.close();
+    app.server.closeAllConnections();
+    await app.close();
+  });
+
+  const headers = { ...auth(await pair(app)) };
+  const base = `http://127.0.0.1:${port}`;
+
+  const input = await app.inject({
+    method: 'POST',
+    url: '/v1/harness/sessions/session-old/input',
+    payload: { text: '在吗' },
+    headers,
+  });
+  assert.equal(input.statusCode, 409);
+  assert.equal((input.json() as { error: { code: string } }).error.code, 'bridge_outdated');
+  assert.match((input.json() as { error: { message: string } }).error.message, /重启 dsh/);
+
+  const stream = await openSse(`${base}/v1/harness/sessions/session-old/stream?after_seq=0`, headers);
+  const events = await readSseUntil(
+    stream,
+    (list) => list.some((event) => event.kind === 'harness_session_live' && event.data.kind === 'error'),
+  );
+  const error = events.find((event) => event.kind === 'harness_session_live')!;
+  assert.match(String(error.data.message), /重启 dsh/);
+  stream.controller.abort();
 });
 
 // ---------- 收口:设备令牌吊销 ----------

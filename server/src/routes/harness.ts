@@ -66,6 +66,8 @@ interface SessionStreamState {
   permission: string | null;
   model: string | null;
   bootstrapped: boolean;
+  /** 最近一次让插件订阅会话失败的原因(旧版插件不认 session.watch.start) */
+  lastWatchError: string | null;
 }
 
 const MAX_BUFFERED_EVENTS = 500;
@@ -86,6 +88,14 @@ const safeParse = (raw: string): Record<string, unknown> => {
     return {};
   }
 };
+
+/** 把"旧插件不认新方法"的原始错误翻译成用户能照做的提示 */
+function describeWatchError(raw: string): string {
+  if (raw.includes('未知方法') || raw.includes('Unknown method')) {
+    return '电脑上的桥接插件还是旧版本:请在电脑上重启 dsh(插件会随 dsh 重新加载),再回到这个页面';
+  }
+  return `连接电脑上的会话失败:${raw}`;
+}
 
 /**
  * dsh 远程开发桥的中继中心。
@@ -264,6 +274,7 @@ export class HarnessHub {
       permission: null,
       model: null,
       bootstrapped: false,
+      lastWatchError: null,
     };
     this.sessions.set(sessionId, state);
     return state;
@@ -332,6 +343,7 @@ export class HarnessHub {
       model: state.model,
       watching: state.watching,
       last_seq: state.seq,
+      watch_error: state.lastWatchError,
     };
   }
 
@@ -412,9 +424,14 @@ export class HarnessHub {
     }
     if (!state.watching && node) {
       state.watching = true;
-      void this.rpc(node, 'session.watch.start', { session_id: sessionId }).catch(() => {
+      try {
+        // 等这一条 RPC 回来:旧版插件会立刻报"未知方法",手机首帧就能看到可照做的提示
+        await this.rpc(node, 'session.watch.start', { session_id: sessionId }, 5_000);
+        state.lastWatchError = null;
+      } catch (error) {
         state.watching = false;
-      });
+        state.lastWatchError = error instanceof Error ? error.message : String(error);
+      }
     }
     return () => {
       state.listeners.delete(listener);
@@ -459,14 +476,30 @@ export class HarnessHub {
     }
   }
 
+
+  /** 把插件侧错误翻译成客户端能理解的错误码(旧插件不认新方法) */
+  private bridgeError(error: unknown): never {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('未知方法') || message.includes('Unknown method')) {
+      throw new ApiError(409, 'bridge_outdated', '电脑上的桥接插件还是旧版本:请在电脑上重启 dsh 后再试')
+    }
+    if (error instanceof ApiError) throw error
+    throw new ApiError(502, 'node_error', message)
+  }
+
   /** 手机输入:auto = 电脑上正在跑就插话,空闲就追加一轮 */
   async sendSessionInput(sessionId: string, text: string, mode: 'auto' | 'steer' | 'followup') {
     const state = this.sessionState(sessionId);
     const node = this.resolveSessionNode(state);
     state.nodeId = node.id;
-    const result = (await this.rpc(node, 'input.send', { session_id: sessionId, text, mode })) as
-      | { mode?: string; status?: string }
-      | undefined;
+    let result: { mode?: string; status?: string } | undefined
+    try {
+      result = (await this.rpc(node, 'input.send', { session_id: sessionId, text, mode })) as
+        | { mode?: string; status?: string }
+        | undefined
+    } catch (error) {
+      this.bridgeError(error)
+    };
     const applied = result?.mode === 'steer' ? 'steer' : 'followup';
     state.status = result?.status === 'running' ? 'running' : state.status;
     // 回显给手机(不落库):持久 user_message 到达后由手机替换
@@ -490,9 +523,14 @@ export class HarnessHub {
   async setSessionPermission(sessionId: string, mode: string) {
     const state = this.sessionState(sessionId);
     const node = this.resolveSessionNode(state);
-    const result = (await this.rpc(node, 'session.permission', { session_id: sessionId, mode })) as
-      | { mode?: string }
-      | undefined;
+    let result: { mode?: string } | undefined
+    try {
+      result = (await this.rpc(node, 'session.permission', { session_id: sessionId, mode })) as
+        | { mode?: string }
+        | undefined
+    } catch (error) {
+      this.bridgeError(error)
+    };
     state.permission = result?.mode ?? mode;
     return { session_id: sessionId, mode: state.permission };
   }
@@ -504,16 +542,21 @@ export class HarnessHub {
     permission?: string;
   }) {
     const node = this.resolveNode(input.nodeId);
-    const result = (await this.rpc(
-      node,
-      'session.create',
-      {
-        cwd: input.cwd,
-        ...(input.agentPreset ? { agent_preset: input.agentPreset } : {}),
-        ...(input.permission ? { permission: input.permission } : {}),
-      },
-      30_000,
-    )) as { session_id?: string; agent_preset?: string | null; permission?: string | null };
+    let result: { session_id?: string; agent_preset?: string | null; permission?: string | null }
+    try {
+      result = (await this.rpc(
+        node,
+        'session.create',
+        {
+          cwd: input.cwd,
+          ...(input.agentPreset ? { agent_preset: input.agentPreset } : {}),
+          ...(input.permission ? { permission: input.permission } : {}),
+        },
+        30_000,
+      )) as { session_id?: string; agent_preset?: string | null; permission?: string | null }
+    } catch (error) {
+      this.bridgeError(error)
+    };
     const sessionId = String(result?.session_id ?? '');
     if (sessionId === '') throw new ApiError(502, 'create_failed', '电脑没有返回新会话 id');
     const state = this.sessionState(sessionId, node.id);
@@ -885,6 +928,15 @@ export function registerHarnessRoutes(
     for (const event of buffered) {
       if (event.kind !== '__live__' && event.seq <= lastSeq) continue;
       flush(event);
+    }
+    // 旧版插件不认 session.watch.start:直接告诉手机去重启 dsh,而不是给一个永远空白的时间线
+    const watch = hub.getSessionState(id);
+    if (watch.watch_error != null) {
+      write('harness_session_live', {
+        session_id: id,
+        kind: 'error',
+        message: describeWatchError(watch.watch_error),
+      });
     }
 
     const heartbeat = setInterval(() => {

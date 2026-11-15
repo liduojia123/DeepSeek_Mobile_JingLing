@@ -39,7 +39,7 @@
 - 仓库:`D:\DPAPP`(`server/` `app/` `bridge-dsh/` `docs/` `deploy/`)
 - Flutter:`D:\dev\flutter`;JDK:`D:\dev\jdk-17`;Android SDK:`D:\dev\android-sdk`
 - 构建:`cd app; flutter build apk --release --target-platform android-arm64`
-- 测试:`cd server; npm test`(33 条)/ `cd app; flutter analyze` + `flutter test`(28 条)
+- 测试:`cd server; npm test`(34 条)/ `cd app; flutter analyze` + `flutter test`(28 条)
 - 注意:`server` 的测试入口用 tsx(会 spawn esbuild 服务进程),受限沙箱里会 EPERM,需要正常权限运行
 - 发布签名:`app/android/key.properties` + `jingling-release.jks`(均不入库)
 - **密钥/服务器凭据在仓库外**:`D:\dev\deploy\`(`keystore-info.txt`、设备令牌、发布脚本);生产 `server/.env` 在服务器 `/opt/jingling/.env`
@@ -69,3 +69,4 @@
 - 2026-11-15 真实 key 复验:输出侧拒答两例均被识别(`safety_block source=output` / `stop_reason=refusal` / `message.safety_json` 落库),正常代码问答未被误标
 - 2026-11-15 生产已升级 v1.0.10:服务器重新构建部署(`/v1/devices` 实测返回设备列表)、OTA 清单 `version_code=11` 与 APK 同尺寸(19298557)、GitHub Release 资产已上传
 - 2026-11-16 v1.1.0:会话级桥接已完成代码与自动化测试(server 33/33、app 28/28);**dsh 插件侧需重启电脑上的 dsh 才会加载新代码**,之后按 `docs/HANDOFF-M3.5.md` §6 逐条验收
+
