@@ -133,6 +133,7 @@ export class HarnessHub {
     cwd?: string;
     requireApproval?: boolean;
     agentPreset?: string;
+    permissionMode?: string;
   }) {
     const node = this.resolveNode(input.nodeId);
     const taskId = randomUUID();
@@ -155,14 +156,19 @@ export class HarnessHub {
       .run(taskId, node.id, input.sessionId, input.prompt, 'running', task.createdAt);
 
     try {
-      await this.rpc(node, 'tasks.start', {
+      const started = (await this.rpc(node, 'tasks.start', {
         task_id: taskId,
         session_id: input.sessionId,
         prompt: input.prompt,
         ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
         ...(input.requireApproval === true ? { require_approval: true } : {}),
         ...(input.agentPreset ? { agent_preset: input.agentPreset } : {}),
-      });
+        ...(input.permissionMode ? { permission_mode: input.permissionMode } : {}),
+      })) as Record<string, unknown> | undefined;
+      if (started && typeof started.session_id === 'string' && started.session_id !== '') {
+        task.sessionId = started.session_id;
+        this.db.prepare('UPDATE harness_task SET workspace = ? WHERE id = ?').run(task.sessionId, task.id);
+      }
     } catch (error) {
       this.setStatus(task, 'error');
       this.pushEvent(task, 'error', {
@@ -442,6 +448,7 @@ export function registerHarnessRoutes(
       cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
       requireApproval: body.require_approval === true,
       agentPreset: typeof body.agent_preset === 'string' ? body.agent_preset : undefined,
+      permissionMode: typeof body.permission_mode === 'string' ? body.permission_mode : undefined,
     });
   });
 
@@ -466,6 +473,23 @@ export function registerHarnessRoutes(
     const decision = body.decision === 'allow' ? 'allow' : 'reject';
     if (!approvalId) throw new ApiError(400, 'validation_error', '需要 approval_id');
     return hub.confirm(id, approvalId, decision);
+  });
+
+  secured.get('/v1/harness/tasks/:id/permission', async (request) => {
+    const { id } = request.params as { id: string };
+    const task = hub.getTask(id);
+    const node = hub.resolveNode(task.nodeId);
+    return await hub.rpc(node, 'permission.get', { session_id: task.sessionId });
+  });
+
+  secured.post('/v1/harness/tasks/:id/permission', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const mode = String(body.mode ?? '');
+    if (mode === '') throw new ApiError(400, 'validation_error', '需要 mode');
+    const task = hub.getTask(id);
+    const node = hub.resolveNode(task.nodeId);
+    return await hub.rpc(node, 'permission.set', { session_id: task.sessionId, mode });
   });
 
   secured.post('/v1/harness/tasks/:id/stop', async (request) => {

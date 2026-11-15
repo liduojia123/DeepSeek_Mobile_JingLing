@@ -80,6 +80,7 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
           _buildNodeBar(state, theme),
           Expanded(child: _buildBody(state, theme)),
           _buildConfirmCard(state, theme),
+          _buildPermissionBar(state, theme),
           _buildComposer(state, theme),
         ],
       ),
@@ -266,6 +267,48 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
                 label: const Text('拒绝'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 远程会话的沙箱权限:决定「手机批准后」操作能否真正执行。
+  Widget _buildPermissionBar(HarnessState state, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Row(
+        children: [
+          Icon(Icons.lock_outline, size: 14, color: theme.colorScheme.outline),
+          const SizedBox(width: 6),
+          Text('权限', style: theme.textTheme.labelSmall),
+          const SizedBox(width: 8),
+          ChoiceChip(
+            label: const Text('沙箱内', style: TextStyle(fontSize: 11)),
+            visualDensity: VisualDensity.compact,
+            selected: state.permissionMode == 'workspace-write',
+            onSelected: state.running
+                ? null
+                : (_) => ref.read(harnessProvider.notifier).setPermissionMode('workspace-write'),
+          ),
+          const SizedBox(width: 6),
+          ChoiceChip(
+            label: const Text('完全访问', style: TextStyle(fontSize: 11)),
+            visualDensity: VisualDensity.compact,
+            selected: state.permissionMode == 'danger-full-access',
+            onSelected: state.running
+                ? null
+                : (_) => ref.read(harnessProvider.notifier).setPermissionMode('danger-full-access'),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              state.permissionMode == 'danger-full-access'
+                  ? '可写工作区外文件(仍需逐条确认)'
+                  : '越界操作会被 dsh 沙箱拒绝',
+              maxLines: 2,
+              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
+            ),
           ),
         ],
       ),

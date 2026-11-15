@@ -155,3 +155,21 @@ event: harness_done     {task_id, stop_reason}
   - 超时:15s 不回应 → 服务端自动 `confirm_result{decision:reject,timeout:true}` → 文件未写入 ✅(fail-closed)
 - 同一调用会再触发一次沙箱升级的 `approval/request`,已用 `rootCallId` 关联:手机批准过的调用在 approval seam 自动 `allowed-once`,避免二次弹卡。
 - **未完成**:手机「批准」后,`write` 到工作区外仍然被 dsh 沙箱拒绝(两次工具调用均失败,文件未创建)。说明沙箱升级不是 approval 可放行的路径,需要在会话级切换权限预设(等同用户在 dsh 里选 danger-full-access),或接受"远程只能执行沙箱内允许的操作"。下一步验证 `permission-presets` 的会话级 API。
+
+## 0.5 权限模式 + 批准后真正执行(生产验证通过,2026-11-15)
+
+**结论:`tools/pre-execute` 负责逐条确认,`ctx.permissionPresets.set(session, preset)` 负责让批准的操作真的能执行。**
+
+- 会话级权限开关:`)permissionPresets.set(agent.session, 'workspace-write' | 'danger-full-access')`,对应 dsh 的「权限预设」(沙箱 + 审批策略一起切)。
+- 任务创建接口新增 `permission_mode`,插件在 agent 就绪后先切权限、再派任务;REST `GET/POST /v1/harness/tasks/:id/permission` 可查/改。
+- 端到端实测(生产):
+  1. `permission_mode=danger-full-access` + `require_approval=true` + `agent_preset=standard` 新建会话
+  2. 模型调用 `write` → 手机收到确认(带 file_path/content/sandbox_permissions/justification)
+  3. 手机批准 → 文件**真的写入成功**(内容 `hello-fullaccess`)
+  4. 随后 `read` 调用也逐条弹确认 → 批准 → 读取成功
+  5. 拒绝/超时路径此前已验证:文件不写入(fail-closed)
+- 注意:
+  - 只切 `danger-full-access` 会把审批策略一并设成 `never`,但**我们的 pre-execute 确认门是独立 waterfall,不受影响**,手机上照样逐条确认。
+  - 权限预设切换后 dsh 侧可能显示 `custom`(沙箱与审批组合不匹配预设表),但沙箱模式已生效。
+  - 目前所有工具(含 read)都会弹确认;后续可按工具白名单降低打扰。
+- 客户端:电脑页新增「权限」开关(沙箱内 / 完全访问),派任务时随请求带上;`flutter analyze` 0、测试 11/11。

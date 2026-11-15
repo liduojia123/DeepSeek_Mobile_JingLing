@@ -453,6 +453,14 @@ export function apply(ctx, config = {}) {
       agent = await ensureAgent(sessionId)
     }
     if (!agent) throw new Error('找不到该会话')
+    // 会话级权限预设:workspace-write / danger-full-access(决定沙箱能否真的执行越界操作)
+    let appliedPermission = null
+    if (params.permission_mode) {
+      const presets = svc('permissionPresets')
+      if (typeof presets?.set !== 'function') throw new Error('permissionPresets 服务不可用(无法切换权限预设)')
+      presets.set(agent.session, String(params.permission_mode))
+      appliedPermission = String(params.permission_mode)
+    }
     ensureSubscription(sessionId, taskId)
     tasks.set(taskId, { sessionId, agent })
     // 需要逐条确认时,把该会话的策略切到 ask(否则历史里的 never 会直接放行/拒绝)
@@ -469,6 +477,7 @@ export function apply(ctx, config = {}) {
       task_id: taskId,
       session_id: sessionId,
       agent_preset: agent?.session?.header?.agentPreset ?? null,
+      permission: appliedPermission,
       preset_mounted: presetMounted,
       preset_mount_error: presetMountError,
     }
@@ -524,6 +533,22 @@ export function apply(ctx, config = {}) {
       case 'unsubscribe':
         dropSubscription(String(params.session_id), params.task_id ? String(params.task_id) : null)
         return { ok: true }
+      case 'permission.set': {
+        const sessionId = String(params.session_id ?? '')
+        const agents = svc('agents')
+        const agent = agents?.get?.(sessionId)
+        if (!agent) throw new Error('会话不在运行,无法切换权限')
+        svc('permissionPresets')?.set?.(agent.session, String(params.mode ?? ''))
+        return { session_id: sessionId, mode: String(params.mode ?? '') }
+      }
+      case 'permission.get': {
+        const sessionId = String(params.session_id ?? '')
+        const agents = svc('agents')
+        const agent = agents?.get?.(sessionId)
+        if (!agent) return { session_id: sessionId, mode: null }
+        const current = svc('permissionPresets')?.current?.(agent.session)
+        return { session_id: sessionId, mode: current?.name ?? current?.preset ?? String(current ?? '') }
+      }
       case 'debug.presets': {
         const presets = svc('agentPresets')
         return {

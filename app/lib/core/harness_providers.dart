@@ -22,6 +22,7 @@ class HarnessState {
     this.toolEvents = const [],
     this.confirm,
     this.confirmRemaining = 0,
+    this.permissionMode = 'workspace-write',
   });
 
   final bool loading;
@@ -36,6 +37,8 @@ class HarnessState {
   final List<HarnessEvent> toolEvents;
   final HarnessConfirmRequest? confirm;
   final int confirmRemaining;
+  /// 远程会话的沙箱权限模式:workspace-write(默认)或 danger-full-access。
+  final String permissionMode;
 
   bool get running => status == 'running';
   HarnessNode? get onlineNode {
@@ -67,6 +70,7 @@ class HarnessState {
     List<HarnessEvent>? toolEvents,
     Object? confirm = _unset,
     int? confirmRemaining,
+    String? permissionMode,
   }) =>
       HarnessState(
         loading: loading ?? this.loading,
@@ -83,6 +87,7 @@ class HarnessState {
         toolEvents: toolEvents ?? this.toolEvents,
         confirm: identical(confirm, _unset) ? this.confirm : confirm as HarnessConfirmRequest?,
         confirmRemaining: confirmRemaining ?? this.confirmRemaining,
+        permissionMode: permissionMode ?? this.permissionMode,
       );
 }
 
@@ -127,6 +132,8 @@ class HarnessController extends Notifier<HarnessState> {
     }
   }
 
+  void setPermissionMode(String mode) => state = state.copyWith(permissionMode: mode);
+
   void selectSession(String sessionId) {
     state = state.copyWith(selectedSessionId: sessionId);
   }
@@ -147,7 +154,11 @@ class HarnessController extends Notifier<HarnessState> {
     );
 
     try {
-      final taskId = await api.startHarnessTask(sessionId: sessionId, prompt: prompt.trim());
+      final taskId = await api.startHarnessTask(
+        sessionId: sessionId,
+        prompt: prompt.trim(),
+        permissionMode: state.permissionMode,
+      );
       if (taskId.isEmpty) throw ApiException('服务器未返回 task_id');
       state = state.copyWith(taskId: taskId);
       await _events?.cancel();

@@ -261,6 +261,7 @@ class ApiClient {
     required String prompt,
     String? cwd,
     String? agentPreset,
+    String? permissionMode,
     bool requireApproval = true,
   }) async {
     final json = await _guard(() async => _decode(await _client.post(
@@ -272,6 +273,7 @@ class ApiClient {
             'require_approval': requireApproval,
             'cwd': ?cwd,
             'agent_preset': ?agentPreset,
+            'permission_mode': ?permissionMode,
           }),
         )));
     return (json['task_id'] as String?) ?? '';
