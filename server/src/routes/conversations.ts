@@ -69,6 +69,10 @@ const ChatBody = z.object({
   regenerate: z.boolean().optional(),
   /** M2:已上传文件的 id 列表(服务端自己的 file.id),会作为 file 块一起发给模型 */
   file_ids: z.array(z.string().min(1)).max(20).optional(),
+  /** 本次请求是否联网搜索(缺省=启用) */
+  search: z.boolean().optional(),
+  /** 本次请求是否深度思考(缺省=启用) */
+  thinking: z.boolean().optional(),
 });
 
 const ListQuery = z.object({
@@ -376,7 +380,14 @@ export function registerConversationRoutes(
 
     let result: Awaited<ReturnType<typeof runAgentTurn>>;
     try {
-      result = await runAgentTurn({ config, messages, signal: controller.signal, emit: writeEvent });
+      result = await runAgentTurn({
+        config,
+        messages,
+        signal: controller.signal,
+        emit: writeEvent,
+        search: body.search,
+        thinking: body.thinking,
+      });
     } catch (error) {
       app.log.error({ err: error }, 'agent turn failed');
       result = {

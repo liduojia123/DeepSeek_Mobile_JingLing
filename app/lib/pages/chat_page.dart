@@ -278,6 +278,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ],
                 ),
               ),
+            // 联网搜索 / 深度思考开关:按条生效,随请求下发
+            Row(
+              children: [
+                FilterChip(
+                  label: const Text('联网搜索', style: TextStyle(fontSize: 11)),
+                  visualDensity: VisualDensity.compact,
+                  selected: chat.searchEnabled,
+                  onSelected: chat.generating
+                      ? null
+                      : (value) => ref.read(chatProvider.notifier).setSearchEnabled(value),
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  label: const Text('深度思考', style: TextStyle(fontSize: 11)),
+                  visualDensity: VisualDensity.compact,
+                  selected: chat.thinkingEnabled,
+                  onSelected: chat.generating
+                      ? null
+                      : (value) => ref.read(chatProvider.notifier).setThinkingEnabled(value),
+                ),
+                const Spacer(),
+              ],
+            ),
+            const SizedBox(height: 6),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [

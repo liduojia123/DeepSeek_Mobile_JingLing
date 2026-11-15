@@ -41,6 +41,10 @@ export interface AgentTurnParams {
   signal: AbortSignal;
   /** 只发增量类事件;message_start / message_end 由路由层负责。 */
   emit: (event: DpappEvent) => void;
+  /** 本次请求是否启用联网搜索/读链接(默认启用) */
+  search?: boolean;
+  /** 本次请求是否启用思考(默认启用) */
+  thinking?: boolean;
 }
 
 /** 中断/失败时上游不会给 usage,按字符数估算,避免用量看板系统性少计。 */
@@ -172,7 +176,13 @@ export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnRe
 
   const source: AsyncGenerator<ChatDelta> = config.mock
     ? mockStream({ messages, signal: combined, delayMs: config.mockDelayMs })
-    : streamChatCompletion({ config, messages, signal: combined });
+    : streamChatCompletion({
+        config,
+        messages,
+        signal: combined,
+        search: params.search,
+        thinking: params.thinking,
+      });
 
   try {
     for await (const delta of source) {

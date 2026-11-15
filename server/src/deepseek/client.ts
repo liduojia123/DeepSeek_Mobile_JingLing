@@ -24,6 +24,10 @@ export interface StreamChatParams {
   config: Config;
   messages: ChatMessage[];
   signal: AbortSignal;
+  /** 本次请求是否启用服务端联网工具(默认跟随配置) */
+  search?: boolean;
+  /** 本次请求是否启用思考(默认启用) */
+  thinking?: boolean;
 }
 
 /**
@@ -32,6 +36,8 @@ export interface StreamChatParams {
  */
 export async function* streamChatCompletion(params: StreamChatParams): AsyncGenerator<ChatDelta> {
   const { config, messages, signal } = params;
+  const searchOn = params.search !== false;
+  const thinkingOn = params.thinking !== false;
   const url = `${config.deepseekBaseUrl.replace(/\/+$/, '')}/chat/completions`;
 
   const body: Record<string, unknown> = {
@@ -39,17 +45,22 @@ export async function* streamChatCompletion(params: StreamChatParams): AsyncGene
     messages,
     stream: true,
     stream_options: { include_usage: true },
-    thinking: { type: 'enabled' },
+    // 思考开启时显式 thinking=on;关闭时不能同时带 thinking(上游会优先 thinking),只用 reasoning_effort=none
+    ...(thinkingOn ? { thinking: { type: 'enabled' } } : { reasoning_effort: 'none' }),
   };
 
   // M2:服务端工具由 DeepSeek 自动执行,我们只声明
   const tools: Array<{ type: string; name: string }> = [];
-  if (config.enableWebSearch) tools.push({ type: 'deepseek_web_search', name: 'deepseek_web_search' });
-  if (config.enableReadUrl) tools.push({ type: 'deepseek_read_url', name: 'deepseek_read_url' });
+  if (searchOn && config.enableWebSearch) tools.push({ type: 'deepseek_web_search', name: 'deepseek_web_search' });
+  if (searchOn && config.enableReadUrl) tools.push({ type: 'deepseek_read_url', name: 'deepseek_read_url' });
   if (tools.length > 0) body.tools = tools;
   if (config.safetyLevel !== 'off') body.safety_check = { level: config.safetyLevel };
   if (config.titleEnabled) body.title = { enabled: true };
 
+  if (process.env.DEBUG_UPSTREAM === '1') {
+    // 排障用:只打印请求体结构,不含密钥
+    console.log('[upstream-body]', JSON.stringify(body));
+  }
   const response = await fetch(url, {
     method: 'POST',
     headers: {

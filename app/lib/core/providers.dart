@@ -131,6 +131,8 @@ class ChatState {
     this.loading = false,
     this.generating = false,
     this.thinking = '',
+    this.searchEnabled = true,
+    this.thinkingEnabled = true,
     this.streamText = '',
     this.streamingCitations = const [],
     this.streamingToolTraces = const [],
@@ -147,6 +149,10 @@ class ChatState {
   final bool loading;
   final bool generating;
   final String thinking;
+  /// 本次对话的联网搜索开关(默认开) */
+  final bool searchEnabled;
+  /// 深度思考开关(默认开) */
+  final bool thinkingEnabled;
   final String streamText;
 
   /// 流式过程中累积的引用与工具卡片(结束后以服务端落库的树为准)
@@ -188,6 +194,8 @@ class ChatState {
     Object? pendingUserText = _unset,
     Object? error = _unset,
     Object? info = _unset,
+    bool? searchEnabled,
+    bool? thinkingEnabled,
   }) =>
       ChatState(
         conversationId: conversationId ?? this.conversationId,
@@ -204,12 +212,18 @@ class ChatState {
         pendingUserText: identical(pendingUserText, _unset) ? this.pendingUserText : pendingUserText as String?,
         error: identical(error, _unset) ? this.error : error as String?,
         info: identical(info, _unset) ? this.info : info as String?,
+        searchEnabled: searchEnabled ?? this.searchEnabled,
+        thinkingEnabled: thinkingEnabled ?? this.thinkingEnabled,
       );
 }
 
 class ChatController extends Notifier<ChatState> {
   @override
   ChatState build() => const ChatState();
+
+  void setSearchEnabled(bool enabled) => state = state.copyWith(searchEnabled: enabled);
+
+  void setThinkingEnabled(bool enabled) => state = state.copyWith(thinkingEnabled: enabled);
 
   Future<void> open(String conversationId) async {
     state = ChatState(conversationId: conversationId, loading: true);
@@ -249,6 +263,8 @@ class ChatController extends Notifier<ChatState> {
         parentMessageId: parentMessageId,
         parentIsRoot: parentIsRoot,
         fileIds: fileIds,
+        search: state.searchEnabled,
+        thinking: state.thinkingEnabled,
       )) {
         switch (event) {
           case ThinkingDeltaEvent(:final text):

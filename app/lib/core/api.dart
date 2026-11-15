@@ -158,11 +158,15 @@ class ApiClient {
     String? parentMessageId,
     bool parentIsRoot = false,
     List<String>? fileIds,
+    bool? search,
+    bool? thinking,
   }) async* {
     final body = <String, dynamic>{
       'content': ?content,
       if (regenerate) 'regenerate': true,
       if (fileIds != null && fileIds.isNotEmpty) 'file_ids': fileIds,
+      'search': ?search,
+      'thinking': ?thinking,
     };
     // null 是有意义的取值(挂到根节点),必须显式发送,不能和「未指定」混淆
     if (parentIsRoot) {
