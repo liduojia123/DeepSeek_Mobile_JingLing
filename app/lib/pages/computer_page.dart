@@ -13,20 +13,36 @@ class ComputerPage extends ConsumerStatefulWidget {
   ConsumerState<ComputerPage> createState() => _ComputerPageState();
 }
 
-class _ComputerPageState extends ConsumerState<ComputerPage> {
+class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBindingObserver {
   final TextEditingController _prompt = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(harnessProvider.notifier).load();
+      final controller = ref.read(harnessProvider.notifier);
+      // 回到电脑页时若还有任务在跑(例如 App 切换/退出过),重新接上事件流
+      if (ref.read(harnessProvider).taskId != null) {
+        controller.onResume();
+      } else {
+        controller.load();
+      }
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    // App 回前台:SSE 长连接可能已被系统断开,重连并刷新节点状态
+    if (lifecycleState == AppLifecycleState.resumed) {
+      ref.read(harnessProvider.notifier).onResume();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _prompt.dispose();
     _scroll.dispose();
     super.dispose();

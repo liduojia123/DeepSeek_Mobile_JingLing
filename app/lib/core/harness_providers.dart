@@ -100,12 +100,15 @@ class HarnessState {
 class HarnessController extends Notifier<HarnessState> {
   StreamSubscription<HarnessEvent>? _events;
   Timer? _ticker;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
 
   @override
   HarnessState build() {
     ref.onDispose(() {
       _events?.cancel();
       _ticker?.cancel();
+      _reconnectTimer?.cancel();
     });
     return const HarnessState();
   }
@@ -151,6 +154,71 @@ class HarnessController extends Notifier<HarnessState> {
     state = state.copyWith(selectedSessionId: sessionId);
   }
 
+  /// 订阅任务事件流。SSE 是长连接:App 切后台/退出再回来会断,断线且任务仍在跑时自动重连
+  /// (服务端会重放该任务的事件缓冲,所以重连前清空本地缓冲避免重复)。
+  Future<void> _attachStream(String taskId, {bool reset = false}) async {
+    final api = ref.read(apiProvider);
+    if (api == null) return;
+    await _events?.cancel();
+    _events = null;
+    if (reset) {
+      state = state.copyWith(thinking: '', output: '', toolEvents: const [], confirm: null, confirmRemaining: 0);
+    }
+    _events = api.harnessTaskEvents(taskId).listen(
+      _applyEvent,
+      onError: (Object error) {
+        if (state.running && state.taskId == taskId) {
+          _scheduleReconnect(taskId);
+          return;
+        }
+        state = state.copyWith(
+          status: 'error',
+          error: error is ApiException ? error.message : '$error',
+        );
+      },
+      onDone: () {
+        if (state.running && state.taskId == taskId) {
+          _scheduleReconnect(taskId);
+          return;
+        }
+        if (state.running) state = state.copyWith(status: 'done');
+      },
+    );
+  }
+
+  void _scheduleReconnect(String taskId) {
+    if (_reconnectTimer != null) return;
+    if (_reconnectAttempts >= 20) {
+      state = state.copyWith(status: 'error', error: '电脑连接中断,重连失败');
+      return;
+    }
+    _reconnectAttempts += 1;
+    _reconnectTimer = Timer(Duration(milliseconds: 500 * _reconnectAttempts.clamp(1, 6)), () async {
+      _reconnectTimer = null;
+      if (!state.running || state.taskId != taskId) return;
+      // 先刷新一次任务状态,确认任务是否已结束
+      try {
+        final snapshot = await ref.read(apiProvider)!.harnessTask(taskId);
+        if (!snapshot.running) {
+          state = state.copyWith(status: snapshot.status);
+          return;
+        }
+      } catch (_) {
+        // 刷新失败就直接重连流
+      }
+      await _attachStream(taskId, reset: true);
+    });
+  }
+
+  /// App 回到前台:刷新节点/工作区,并重新接上仍在运行的任务流。
+  Future<void> onResume() async {
+    final taskId = state.taskId;
+    if (taskId != null && state.running) {
+      _reconnectAttempts = 0;
+      await _attachStream(taskId, reset: true);
+    }
+    await load();
+  }
   Future<void> startTask(String prompt) async {
     final api = ref.read(apiProvider);
     final sessionId = state.selectedSessionId;
@@ -175,17 +243,8 @@ class HarnessController extends Notifier<HarnessState> {
       );
       if (taskId.isEmpty) throw ApiException('服务器未返回 task_id');
       state = state.copyWith(taskId: taskId);
-      await _events?.cancel();
-      _events = api.harnessTaskEvents(taskId).listen(
-        _applyEvent,
-        onError: (Object error) => state = state.copyWith(
-          status: 'error',
-          error: error is ApiException ? error.message : '$error',
-        ),
-        onDone: () {
-          if (state.running) state = state.copyWith(status: 'done');
-        },
-      );
+      _reconnectAttempts = 0;
+      await _attachStream(taskId);
     } on ApiException catch (error) {
       state = state.copyWith(status: 'error', error: error.message);
     }
