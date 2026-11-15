@@ -137,3 +137,10 @@ event: harness_done     {task_id, stop_reason}
 - 新建会话(`agents.create`)的工具集取决于 `meta.agentPreset`,实测传入 `standard` 后新会话仍只拿到全局工具(ego-browser 等),没有 fs/bash 沙箱工具,于是模型改用 ego 的 Node heredoc 直接写文件——绕过了审批通道。
 
 下一步:**先验证 agentPreset 是否真的落到新会话 header**(`session.header.agentPreset`),必要时改用 `agents.create({ meta:{agentPreset} })` 之外的方式(例如从 live agent 继承 preset、或用 `setup` 回调安装工具),再跑一次「越界写文件」触发 `confirm_request`。
+
+## 0.3 电脑页与「live 会话优先」(2026-11-15)
+
+- 手机端「电脑页」已实现并验证渲染:节点在线状态、真实工作区列表(5 个)、工作区内会话列表(带「运行中」标记)、派任务输入框。
+- **历史会话恢复受限**:本机 32 个历史会话里,绝大多数 `agents.resume({resumeSessionId})` 会因 dsh 侧会话校验失败被拒(`session event at seq N lacks an identified message` / `not found`),少数能 resume 的也无法保证带完整预设工具。
+- 因此桥接的产品口径调整为:**优先操作 dsh 当前 live 的会话**(`agents.get(sessionId)`);对非 live 会话保留 `resume` 作为尽力而为,失败时把 dsh 的错误透传给手机。
+- 审批端到端仍待验证:需要「live + 带 fs/pwsh 工具 + 策略 ask」的会话;建议由用户在电脑上开着一个会话时验证。

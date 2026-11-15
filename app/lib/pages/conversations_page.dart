@@ -5,6 +5,7 @@ import '../core/api.dart';
 import '../core/providers.dart';
 import '../models/models.dart';
 import 'chat_page.dart';
+import 'computer_page.dart';
 import 'settings_page.dart';
 
 class ConversationsPage extends ConsumerWidget {
@@ -121,6 +122,13 @@ class ConversationsPage extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('鲸灵'),
         actions: [
+          IconButton(
+            tooltip: '电脑',
+            icon: const Icon(Icons.desktop_windows_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const ComputerPage()),
+            ),
+          ),
           IconButton(
             tooltip: '临时对话',
             icon: const Icon(Icons.bolt_outlined),

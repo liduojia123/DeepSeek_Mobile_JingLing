@@ -243,6 +243,7 @@ export function apply(ctx, config = {}) {
           cwd: header.cwd ?? null,
           created_at: header.createdAt ?? header.created_at ?? null,
           parent: header.parent ?? null,
+          agent_preset: header.agentPreset ?? null,
           live: Boolean(row?.live),
           persisted: Boolean(row?.persisted),
         }
@@ -356,7 +357,11 @@ export function apply(ctx, config = {}) {
       }
     }
     agent.followup({ content: [{ type: 'text', text: String(prompt ?? '') }], source: { kind: 'jingling' } })
-    return { task_id: taskId, session_id: sessionId }
+    return {
+      task_id: taskId,
+      session_id: sessionId,
+      agent_preset: agent?.session?.header?.agentPreset ?? null,
+    }
   }
 
   async function steerTask({ task_id: taskId, prompt }) {

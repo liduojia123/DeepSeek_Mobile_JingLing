@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/events.dart';
+import '../models/harness.dart';
 import '../models/models.dart';
 import 'sse_client.dart';
 
@@ -234,6 +235,114 @@ class ApiClient {
           headers: _headers(),
         )));
     return UsageSummary.fromJson(json);
+  }
+
+  // ---------- dsh 远程开发桥(M3) ----------
+
+  Future<List<HarnessNode>> harnessNodes() async {
+    final json = await _guard(() async =>
+        _decode(await _client.get(_uri('/v1/harness/nodes'), headers: _headers())));
+    return ((json['nodes'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((item) => HarnessNode.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
+
+  Future<HarnessWorkspaceSnapshot> harnessWorkspaces({String? nodeId}) async {
+    final json = await _guard(() async => _decode(await _client.get(
+          _uri('/v1/harness/workspaces', nodeId == null ? null : {'node_id': nodeId}),
+          headers: _headers(),
+        )));
+    return HarnessWorkspaceSnapshot.fromJson(json);
+  }
+
+  Future<String> startHarnessTask({
+    required String sessionId,
+    required String prompt,
+    String? cwd,
+    String? agentPreset,
+    bool requireApproval = true,
+  }) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/harness/tasks'),
+          headers: _headers(),
+          body: jsonEncode({
+            'session_id': sessionId,
+            'prompt': prompt,
+            'require_approval': requireApproval,
+            'cwd': ?cwd,
+            'agent_preset': ?agentPreset,
+          }),
+        )));
+    return (json['task_id'] as String?) ?? '';
+  }
+
+  Future<HarnessTaskSnapshot> harnessTask(String taskId) async {
+    final json = await _guard(() async =>
+        _decode(await _client.get(_uri('/v1/harness/tasks/$taskId'), headers: _headers())));
+    return HarnessTaskSnapshot.fromJson(json);
+  }
+
+  Future<void> confirmHarnessTask({
+    required String taskId,
+    required String approvalId,
+    required bool allow,
+  }) async {
+    await _guard(() async {
+      final response = await _client.post(
+        _uri('/v1/harness/tasks/$taskId/confirm'),
+        headers: _headers(),
+        body: jsonEncode({'approval_id': approvalId, 'decision': allow ? 'allow' : 'reject'}),
+      );
+      _decode(response);
+      return null;
+    });
+  }
+
+  Future<void> stopHarnessTask(String taskId) async {
+    await _guard(() async {
+      final response = await _client.post(
+        _uri('/v1/harness/tasks/$taskId/stop'),
+        headers: _headers(),
+        body: '{}',
+      );
+      _decode(response);
+      return null;
+    });
+  }
+
+  /// 任务的实时事件流(SSE):`event: harness_<kind>` + `data: <payload JSON>`。
+  Stream<HarnessEvent> harnessTaskEvents(String taskId) async* {
+    final client = http.Client();
+    var seq = 0;
+    try {
+      final request = http.Request('POST', _uri('/v1/harness/tasks/$taskId/events'))
+        ..headers.addAll(_headers());
+      final response = await client.send(request);
+      if (response.statusCode != 200) {
+        final text = await response.stream.bytesToString();
+        throw _errorFrom(response.statusCode, text);
+      }
+      final parser = SseStreamParser();
+      await for (final chunk in response.stream.transform(utf8.decoder)) {
+        for (final sse in parser.addChunk(chunk)) {
+          final payload = jsonDecode(sse.data);
+          if (payload is! Map) continue;
+          seq += 1;
+          yield HarnessEvent(
+            seq: seq,
+            kind: sse.event.replaceFirst('harness_', ''),
+            payload: Map<String, dynamic>.from(payload),
+          );
+        }
+      }
+    } on ApiException {
+      rethrow;
+    } on http.ClientException catch (error) {
+      throw ApiException('电脑连接中断:${error.message}');
+    } finally {
+      client.close();
+    }
   }
 
   // ---------- 内部 ----------
