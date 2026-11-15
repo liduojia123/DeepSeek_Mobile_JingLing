@@ -100,6 +100,13 @@ cd app && flutter analyze && flutter test
 | M0 后端骨架 | ✅ 完成(配对/分支/SSE/文件/用量) |
 | M1 客户端核心 | ✅ 完成(四页/流式/分支 UI,真机验证) |
 | M2 搜索与文件 | ✅ 完成(搜索/读链接卡片、引用角标、PDF 问答、自动标题) |
-| M3 dsh 远程开发桥 → M6 打包发布 | 待排 |
+| M3 dsh 远程开发桥 | ✅ 完成(工具调用逐条确认,fail-closed;手机端可切沙箱预设) |
+| M4 语音 | ✅ 完成(ASR/TTS 接口、连续语音模式) |
+| M5 工具与用量 | ✅ 完成(memory / http_request、每日预算熔断、用量页) |
+| M6 打包发布 | ✅ 完成(release 18.3MB、应用内 OTA、服务器备份与健康检查) |
 
-测试规模:server `npm test` 20 项、app `flutter test` 11 项。
+测试规模:server `npm test` 27 项、app `flutter test` 11 项。
+
+## 许可
+
+MIT,见 [`LICENSE`](LICENSE)。
