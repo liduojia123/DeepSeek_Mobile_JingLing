@@ -156,14 +156,26 @@ export function apply(ctx, config = {}) {
     sendEvent(sessionId, { type: 'error', message: error instanceof Error ? error.message : String(error) })
   })
 
-  // ---------- 审批:转发到手机,超时按拒绝 ----------
+  // ---------- 工具调用确认:pre-execute 拦截 → 手机批准/拒绝 ----------
 
-  const disposeApproval = ctx.on('approval/request', async (req, next) => {
-    const sessionId = req?.agent?.session?.id
-    // 只接管手机正在管理的会话;其余交还给原有 answerer 链
-    if (!sessionId || !taskIdOfSession(sessionId)) return next()
-    if (!isOpen()) return next()
+  /** 需要逐条确认的会话(任务带 require_approval 时加入) */
+  const confirmSessions = new Set()
+  /** 手机已批准的调用(按 rootCallId 关联,避免同一调用再弹一次沙箱升级确认) */
+  const approvedCalls = new Set()
 
+  function summarizeArgs(args) {
+    if (args === undefined || args === null) return ''
+    try {
+      const text = typeof args === 'string' ? args : JSON.stringify(args)
+      return text.length > 280 ? `${text.slice(0, 280)}…` : text
+    } catch {
+      return ''
+    }
+  }
+
+  /** 把一次确认请求发给手机并等待结果(超时/断线 → 拒绝) */
+  async function askPhone({ sessionId, tool, reason, signal }) {
+    if (!isOpen()) return 'reject'
     const approvalId = randomUUID()
     const timeoutMs = Math.max(5, Number(cfg.confirmTimeoutSec) || 15) * 1000
     const sent = send({
@@ -171,13 +183,12 @@ export function apply(ctx, config = {}) {
       approval_id: approvalId,
       session_id: sessionId,
       task_id: taskIdOfSession(sessionId),
-      tool: req.toolName ?? 'unknown',
-      reason: req.reason ?? '',
+      tool,
+      reason,
       timeout_sec: Math.round(timeoutMs / 1000),
     })
-    if (!sent) return 'rejected'
-
-    const decision = await new Promise((resolve) => {
+    if (!sent) return 'reject'
+    return await new Promise((resolve) => {
       const timer = setTimeout(() => {
         pendingApprovals.delete(approvalId)
         resolve('timeout')
@@ -187,7 +198,7 @@ export function apply(ctx, config = {}) {
         pendingApprovals.delete(approvalId)
         resolve(value)
       })
-      req.signal?.addEventListener(
+      signal?.addEventListener(
         'abort',
         () => {
           clearTimeout(timer)
@@ -197,12 +208,87 @@ export function apply(ctx, config = {}) {
         { once: true },
       )
     })
+  }
 
+  /** 旧的 approval seam(部分工具仍走这里);收不到时由 pre-execute 兜底 */
+  async function handleApproval(req, next) {
+    const sessionId = req?.agent?.session?.id
+    if (!sessionId || !confirmSessions.has(sessionId)) return next()
+    // 手机已在 pre-execute 里批准过这次调用 → 沙箱升级确认自动放行,不再弹第二次
+    if (req.callId !== undefined && approvedCalls.delete(String(req.callId))) return 'allowed-once'
+    const decision = await askPhone({
+      sessionId,
+      tool: req.toolName ?? 'unknown',
+      reason: req.reason ?? '',
+      signal: req.signal,
+    })
     if (decision === 'allow') return 'allowed-once'
     if (decision === 'cancelled') return 'cancelled'
-    // 拒绝与超时都按 fail-closed 的 rejected 处理
     return 'rejected'
+  }
+
+  /**
+   * 核心确认路径:在工具真正执行前拦下,把工具名+参数发给手机。
+   * 返回 next() 放行;返回 deny 拒绝(fail-closed)。
+   */
+  async function handlePreExecute(exec, next) {
+    const sessionId = exec?.agent?.session?.id
+    if (!sessionId || !confirmSessions.has(sessionId)) return next()
+    if (!taskIdOfSession(sessionId)) return next()
+    const decision = await askPhone({
+      sessionId,
+      tool: exec?.name ?? 'tool',
+      reason: summarizeArgs(exec?.arguments ?? exec?.input ?? exec?.args),
+      signal: exec?.signal,
+    })
+    if (decision === 'allow') {
+      if (exec?.rootCallId !== undefined) approvedCalls.add(String(exec.rootCallId))
+      return next()
+    }
+    return { kind: 'deny', reason: '手机端拒绝或未确认该操作(fail-closed)' }
+  }
+
+  // 审批/工具确认都是按 scope 过滤的 waterfall:preset 域里的 agent 请求,
+  // 注册在 Host ctx 的监听器收不到,必须在 agent/created 里注册到 agent.ctx(practices.md)。
+  const disposeApproval = ctx.on('approval/request', handleApproval)
+  const disposePreExecute = ctx.on('tools/pre-execute', handlePreExecute)
+  /** sessionId -> 该 agent 上下文上的 disposer 列表 */
+  const agentDisposers = new Map()
+
+  const registerForAgent = (agent) => {
+    const sessionId = agent?.session?.id
+    if (!sessionId || !agent?.ctx || agentDisposers.has(sessionId)) return
+    try {
+      agentDisposers.set(sessionId, [
+        agent.ctx.on('approval/request', handleApproval),
+        agent.ctx.on('tools/pre-execute', handlePreExecute),
+      ])
+    } catch (error) {
+      log('注册 agent 审批/工具确认监听失败:', error?.message ?? error)
+    }
+  }
+
+  const disposeAgentCreated = ctx.on('agent/created', ({ agent }) => registerForAgent(agent))
+  const disposeAgentDisposed = ctx.on('agent/disposed', ({ agent }) => {
+    const sessionId = agent?.session?.id
+    const disposers = sessionId ? agentDisposers.get(sessionId) : undefined
+    if (!disposers) return
+    for (const dispose of disposers) {
+      try {
+        dispose()
+      } catch {
+        // ignore
+      }
+    }
+    agentDisposers.delete(sessionId)
   })
+
+  // 插件加载时已经 live 的 agent 不会再有 agent/created,补注册一轮
+  try {
+    for (const agent of svc('agents')?.list?.() ?? []) registerForAgent(agent)
+  } catch (error) {
+    log('补注册已存在 agent 的审批监听失败:', error?.message ?? error)
+  }
 
   // ---------- RPC ----------
 
@@ -321,6 +407,14 @@ export function apply(ctx, config = {}) {
     }
     return undefined
   }
+  /** 构造带唯一 id 的用户消息(inbox 以 id 去重,重复的 undefined id 会报 already pending) */
+  function userMessage(text) {
+    return {
+      id: `msg-${randomUUID()}`,
+      content: [{ type: 'text', text: String(text ?? '') }],
+      source: { kind: 'jingling' },
+    }
+  }
   async function startTask(params = {}) {
     const taskId = String(params.task_id ?? '')
     let sessionId = String(params.session_id ?? '')
@@ -363,13 +457,14 @@ export function apply(ctx, config = {}) {
     tasks.set(taskId, { sessionId, agent })
     // 需要逐条确认时,把该会话的策略切到 ask(否则历史里的 never 会直接放行/拒绝)
     if (params.require_approval) {
+      confirmSessions.add(sessionId)
       try {
         svc('approval')?.setPolicy?.(agent, 'ask')
       } catch (error) {
         log('切换审批策略失败:', error?.message ?? error)
       }
     }
-    agent.followup({ content: [{ type: 'text', text: String(prompt ?? '') }], source: { kind: 'jingling' } })
+    agent.followup(userMessage(prompt))
     return {
       task_id: taskId,
       session_id: sessionId,
@@ -383,7 +478,7 @@ export function apply(ctx, config = {}) {
     const task = tasks.get(taskId)
     const agent = task?.agent ?? svc('agents')?.get?.(task?.sessionId)
     if (!agent) throw new Error('任务对应会话已不在运行')
-    agent.steer({ content: [{ type: 'text', text: String(prompt ?? '') }], source: { kind: 'jingling' } })
+    agent.steer(userMessage(prompt))
     return { ok: true }
   }
 
@@ -568,6 +663,21 @@ export function apply(ctx, config = {}) {
     disposeStatus?.()
     disposeError?.()
     disposeApproval?.()
+    disposePreExecute?.()
+    disposeAgentCreated?.()
+    disposeAgentDisposed?.()
+    for (const disposers of agentDisposers.values()) {
+      for (const dispose of disposers) {
+        try {
+          dispose()
+        } catch {
+          // ignore
+        }
+      }
+    }
+    agentDisposers.clear()
+    confirmSessions.clear()
+    approvedCalls.clear()
     try {
       socket?.close()
     } catch {

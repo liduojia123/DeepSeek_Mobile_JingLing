@@ -144,3 +144,14 @@ event: harness_done     {task_id, stop_reason}
 - **历史会话恢复受限**:本机 32 个历史会话里,绝大多数 `agents.resume({resumeSessionId})` 会因 dsh 侧会话校验失败被拒(`session event at seq N lacks an identified message` / `not found`),少数能 resume 的也无法保证带完整预设工具。
 - 因此桥接的产品口径调整为:**优先操作 dsh 当前 live 的会话**(`agents.get(sessionId)`);对非 live 会话保留 `resume` 作为尽力而为,失败时把 dsh 的错误透传给手机。
 - 审批端到端仍待验证:需要「live + 带 fs/pwsh 工具 + 策略 ask」的会话;建议由用户在电脑上开着一个会话时验证。
+
+## 0.4 工具调用确认(已打通,生产验证)
+
+**结论:用 `tools/pre-execute` 而不是 `approval/request` 做确认拦截。**
+
+- `approval/request` 在 preset 隔离域里注册位置敏感(需在 `agent/created` 里注册到 `agent.ctx`),且**不携带工具参数**;实测在远程新建 agent 上不稳定。
+- `tools/pre-execute`(waterfall)可拿到工具名 + 完整参数,返回 `next()` 放行、`{kind:'deny', reason}` 拒绝。已在生产验证:
+  - 拒绝:手机收到 `tool=write` + 参数(file_path/content/sandbox_permissions/justification),拒绝 → 文件未写入 ✅
+  - 超时:15s 不回应 → 服务端自动 `confirm_result{decision:reject,timeout:true}` → 文件未写入 ✅(fail-closed)
+- 同一调用会再触发一次沙箱升级的 `approval/request`,已用 `rootCallId` 关联:手机批准过的调用在 approval seam 自动 `allowed-once`,避免二次弹卡。
+- **未完成**:手机「批准」后,`write` 到工作区外仍然被 dsh 沙箱拒绝(两次工具调用均失败,文件未创建)。说明沙箱升级不是 approval 可放行的路径,需要在会话级切换权限预设(等同用户在 dsh 里选 danger-full-access),或接受"远程只能执行沙箱内允许的操作"。下一步验证 `permission-presets` 的会话级 API。
