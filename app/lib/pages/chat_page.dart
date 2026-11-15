@@ -409,7 +409,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      _recording ? '正在录音…松开结束' : '正在识别语音…',
+                      _recording ? '正在录音…松开或再点一次结束' : '正在识别语音…',
                       style: theme.textTheme.labelSmall,
                     ),
                   ],
@@ -418,14 +418,26 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // 按住说话:松开 → 上传 ASR → 文字进输入框供确认
+                // 语音:按住说话(松开结束),或点一下开始/再点结束。
+                // 注意这里不能用 IconButton:它的 InkWell 会吞掉长按手势。
                 GestureDetector(
-                  onLongPressStart: chat.generating || _transcribing ? null : (_) => _startRecording(),
-                  onLongPressEnd: chat.generating || _transcribing ? null : (_) => _stopRecordingAndTranscribe(),
-                  child: IconButton(
-                    tooltip: '按住说话',
-                    onPressed: chat.generating ? null : () {},
-                    icon: Icon(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: chat.generating || _transcribing
+                      ? null
+                      : () {
+                          if (_recording) {
+                            _stopRecordingAndTranscribe();
+                          } else {
+                            _startRecording();
+                          }
+                        },
+                  onLongPressStart:
+                      chat.generating || _transcribing ? null : (_) => _startRecording(),
+                  onLongPressEnd:
+                      chat.generating || _transcribing ? null : (_) => _stopRecordingAndTranscribe(),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Icon(
                       _recording ? Icons.mic : Icons.mic_none,
                       color: _recording ? theme.colorScheme.error : null,
                     ),
