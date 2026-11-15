@@ -151,3 +151,37 @@ db.exec(\"VACUUM INTO '/app/data/backup-'+Date.now()+'.db'\");"
 - 桥接只出站,电脑不开任何入站端口。
 - 审批请求不携带工具参数(dsh 限制),手机上只展示工具名与理由。
 - 历史会话恢复能力受 dsh 会话校验限制,建议对**当前正在运行的会话**派任务。
+
+## M6:备份、监控与发布
+
+### 每日备份(已安装在生产)
+
+- 脚本:`/opt/jingling/backup.sh`(仓库内同源副本在 `D:\dev\deploy\backup.sh`)
+- 方式:容器内用 better-sqlite3 的 `db.backup()` 做一致性快照 → gzip → 存 `/opt/jingling/backups/`
+- 同时备份 `.env` 与 `docker-compose.yml`(权限 600),保留 7 天
+- cron:`30 3 * * *`(每日 03:30)
+- 手动跑一次:`sudo /opt/jingling/backup.sh`
+- 恢复:
+  ```bash
+  sudo /opt/jingling/backup.sh               # 先备份当前
+  sudo docker compose stop
+  sudo gunzip -c /opt/jingling/backups/jingling-YYYYmmdd-HHMMSS.db.gz > /opt/jingling/data/jingling.db
+  sudo chown 1000:1000 /opt/jingling/data/jingling.db   # 容器内 uid
+  sudo docker compose up -d
+  curl -s http://127.0.0.1:3001/health
+  ```
+
+### 健康监控
+
+- 脚本:`/opt/jingling/healthcheck.sh`,cron 每 5 分钟
+- 只在**失败/恢复**时写 `/opt/jingling/health.log`(不自动重启,避免掩盖问题)
+- 容器本身有 Docker healthcheck(`docker compose ps` 显示 healthy)
+
+### Release APK(M6)
+
+- 签名:`app/android/jingling-release.jks` + `app/android/key.properties`(均**不入库**;密码备份在仓库外 `D:\dev\deploy\keystore-info.txt`)
+- 构建:`flutter build apk --release --target-platform android-arm64` → `build/app/outputs/flutter-apk/app-release.apk`(**18.3 MB**,debug 包为 195 MB)
+- R8 混淆 + 资源裁剪已开启(`proguard-rules.pro`)
+- 校验:`apksigner verify --print-certs app-release.apk`(CN=JingLing)
+- 安装:与 debug 包签名不同,**先 `adb uninstall com.jingling.jingling`** 再装 release;卸载会清除本机设备令牌,需用固定配对码重新配对
+- 升级:以后同签名覆盖安装即可保留登录态

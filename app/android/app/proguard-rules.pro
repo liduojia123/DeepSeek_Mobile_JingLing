@@ -1,0 +1,3 @@
+-keep class io.flutter.** { *; }
+-keep class com.jingling.jingling.** { *; }
+-dontwarn io.flutter.embedding.**

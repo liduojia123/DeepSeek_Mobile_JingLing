@@ -28,3 +28,9 @@ apikey*
 # 部署产物:生产 env 不入库
 server/.env.production
 .deploy/*.env
+
+# M6 release 签名(绝不入库)
+*.jks
+*.keystore
+key.properties
+keystore*.txt

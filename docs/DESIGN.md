@@ -338,3 +338,4 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | M3 本地优先 | 远程逐条确认不得压过本地用户:会话为「完全访问」时桥接不拦截;手机派任务默认不逐条确认,确认改为可选开关。原因:远程门曾把本机 dsh 的每个工具调用都拦成拒绝,导致本地无法操作 |
 
 | 2026-11-15 | M5 工具与用量 | memory / http_request 用标准 function calling 在服务端本地执行(DeepSeek 服务端工具不受影响,可并存);工具调用以 `assistant(tool_calls)+tool` 成对落 `message.tool_blocks_json` 供历史回放;预算熔断在生成前按 UTC 当日累计检查,超出返回 402 |
+| 2026-11-15 | M6 发布 | release 签名(keystore/key.properties 不入库,密码存仓库外)、R8 混淆+资源裁剪(195MB→18.3MB)、自适应应用图标+品牌蓝启动底;服务器每日备份(cron 03:30,sqlite 一致性快照,保留 7 天)与 5 分钟健康检查(仅记录失败/恢复,不自动重启) |
