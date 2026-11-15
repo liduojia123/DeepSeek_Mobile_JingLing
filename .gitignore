@@ -29,6 +29,9 @@ apikey*
 server/.env.production
 .deploy/*.env
 
+# 发布产物(APK 走 GitHub Releases,不入库)
+build-release/
+
 # 临时调试文件与会话日志(绝不入库)
 .tmp-*
 .acl-reports/
