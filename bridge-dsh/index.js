@@ -472,6 +472,12 @@ export function apply(ctx, config = {}) {
         log('切换审批策略失败:', error?.message ?? error)
       }
     }
+    // 远程派任务语义:先中断该会话可能残留的旧回合(空闲时 no-op),避免历史挂起把新任务堵死
+    try {
+      agent.cancel({ kind: 'user' })
+    } catch {
+      // ignore
+    }
     agent.followup(userMessage(prompt))
     return {
       task_id: taskId,
