@@ -96,10 +96,8 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
               child: state.viewingTask ? _buildTaskView(state, theme) : _buildBody(state, theme),
             ),
             _buildConfirmCard(state, theme),
-            if (state.viewingTask) ...[
-              _buildPermissionBar(state, theme),
-              _buildComposer(state, theme),
-            ],
+            _buildPermissionBar(state, theme),
+            _buildComposer(state, theme),
           ],
         ),
       ),
