@@ -20,6 +20,10 @@ class VoiceService {
   bool get isRecording => _recordPath != null;
   bool get isPlaying => _playing;
 
+  /// 录音音量流(dBFS,约 -60..0),用于静音检测自动断句。
+  Stream<Amplitude> amplitudeStream([Duration interval = const Duration(milliseconds: 100)]) =>
+      _recorder.onAmplitudeChanged(interval);
+
   /// 开始录音;返回 false 表示麦克风不可用/被拒绝。
   Future<bool> startRecording() async {
     if (await _recorder.hasPermission() == false) return false;

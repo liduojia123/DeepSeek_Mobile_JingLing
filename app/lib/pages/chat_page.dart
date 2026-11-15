@@ -9,9 +9,11 @@ import '../core/api.dart';
 import '../core/config.dart';
 import '../core/providers.dart';
 import '../core/voice.dart';
+import '../core/voice_session.dart';
 import '../models/models.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_menu.dart';
+import '../widgets/voice_overlay.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key, required this.conversationId});
@@ -74,6 +76,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   /// 朗读一段文字(先停掉上一段,保证可打断)。
+  /// 打开「语音模式」:免按住连续对话(聆听→自动断句→回答→播报→继续听)。
+  Future<void> _openVoiceMode() async {
+    await _voice.stop();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => const VoiceOverlay(),
+      ),
+    );
+  }
+
   Future<void> _speak(String text) async {
     final api = ref.read(apiProvider);
     if (api == null || text.trim().isEmpty) return;
@@ -234,7 +248,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ref.read(chatProvider.notifier).clearBanner();
       }
       // 回答完成 → 自动朗读最终回答(可打断)
-      if (previous != null && previous.generating && !next.generating && next.error == null && _autoSpeak) {
+      if (previous != null &&
+          previous.generating &&
+          !next.generating &&
+          next.error == null &&
+          _autoSpeak &&
+          !ref.read(voiceSessionProvider).active) {
         final answers = (next.detail?.pathNodes ?? const <MessageNode>[])
             .where((node) => node.isAssistant)
             .toList(growable: false);
@@ -249,6 +268,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       appBar: AppBar(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            tooltip: '语音模式(免按住连续对话)',
+            onPressed: _openVoiceMode,
+            icon: const Icon(Icons.graphic_eq),
+          ),
           if (_speaking)
             IconButton(
               tooltip: '停止朗读',

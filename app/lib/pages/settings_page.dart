@@ -26,7 +26,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       final url = ref.read(settingsProvider).value?.serverUrl;
       if (url != null && mounted) _serverUrl.text = url;
       UpdateService.currentVersion().then((version) {
-        if (mounted) setState(() => _versionLabel = 'v ()');
+        if (mounted) setState(() => _versionLabel = 'v${version.name}+${version.code}');
       });
     });
   }
@@ -253,7 +253,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const Divider(height: 32),
           Center(
             child: Text(
-              '鲸灵 JingLing · v0.1.0\n你的随身精灵',
+              '鲸灵 JingLing${_versionLabel.isEmpty ? '' : ' · $_versionLabel'}\n你的随身精灵',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
             ),

@@ -341,3 +341,5 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | M6 发布 | release 签名(keystore/key.properties 不入库,密码存仓库外)、R8 混淆+资源裁剪(195MB→18.3MB)、自适应应用图标+品牌蓝启动底;服务器每日备份(cron 03:30,sqlite 一致性快照,保留 7 天)与 5 分钟健康检查(仅记录失败/恢复,不自动重启) |
 
 | 2026-11-15 | M6+ OTA | 应用内更新:服务器发布目录放 `jingling.apk` + `release.json`,App 比对 versionCode 后下载并交系统安装器(FileProvider + REQUEST_INSTALL_PACKAGES);不引入第三方安装插件。开发期仍需 adb 装首次版本,之后走 OTA |
+
+| 2026-11-15 | 连续语音 | 手机输入法自带 STT,按条语音输入价值低 → 改为连续语音模式(免按住、自动断句、自动播报、可手动打断);VAD 用录音音量阈值,未做回声消除式自动 barge-in |
