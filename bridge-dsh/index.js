@@ -119,7 +119,8 @@ export function apply(ctx, config = {}) {
   const taskIdOfSession = (sessionId) => {
     const ids = sessionSubs.get(sessionId)
     if (!ids || ids.size === 0) return null
-    return [...ids][0]
+    // 同一会话可能有多个历史任务:取最新订阅的那个,否则事件会发给早已结束的旧任务
+    return [...ids][ids.size - 1]
   }
 
   const sendEvent = (sessionId, event) => {
@@ -461,6 +462,8 @@ export function apply(ctx, config = {}) {
       presets.set(agent.session, String(params.permission_mode))
       appliedPermission = String(params.permission_mode)
     }
+    // 新任务接管该会话:清掉同会话的旧任务订阅,避免事件路由到旧 task_id
+    dropSubscription(sessionId, null)
     ensureSubscription(sessionId, taskId)
     tasks.set(taskId, { sessionId, agent })
     // 需要逐条确认时,把该会话的策略切到 ask(否则历史里的 never 会直接放行/拒绝)
