@@ -475,3 +475,27 @@ class MemoryNote {
         updatedAt: (json['updated_at'] as String?) ?? '',
       );
 }
+/// OTA:服务器上发布的 App 版本。
+class AppRelease {
+  const AppRelease({
+    required this.versionCode,
+    required this.versionName,
+    required this.notes,
+    required this.size,
+    required this.downloadPath,
+  });
+
+  final int versionCode;
+  final String versionName;
+  final String notes;
+  final int size;
+  final String downloadPath;
+
+  factory AppRelease.fromJson(Map<String, dynamic> json) => AppRelease(
+        versionCode: (json['version_code'] as num?)?.toInt() ?? 0,
+        versionName: (json['version_name'] as String?) ?? '',
+        notes: (json['notes'] as String?) ?? '',
+        size: (json['size'] as num?)?.toInt() ?? 0,
+        downloadPath: (json['download_path'] as String?) ?? '/v1/app/download',
+      );
+}

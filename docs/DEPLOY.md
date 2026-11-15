@@ -185,3 +185,31 @@ db.exec(\"VACUUM INTO '/app/data/backup-'+Date.now()+'.db'\");"
 - 校验:`apksigner verify --print-certs app-release.apk`(CN=JingLing)
 - 安装:与 debug 包签名不同,**先 `adb uninstall com.jingling.jingling`** 再装 release;卸载会清除本机设备令牌,需用固定配对码重新配对
 - 升级:以后同签名覆盖安装即可保留登录态
+
+## M6+: App 内 OTA 更新(免插线)
+
+### 服务器发布新版本
+
+1. 本地构建:`flutter build apk --release --target-platform android-arm64`
+2. 上传到生产发布目录(`./data` 已挂载进容器,无需改 compose):
+   ```bash
+   pscp -P 22222 build/app/outputs/flutter-apk/app-release.apk ubuntu@<ip>:/opt/jingling/data/app/jingling.apk
+   ```
+3. 写版本清单 `/opt/jingling/data/app/release.json`:
+   ```json
+   {"version_code": 4, "version_name": "1.0.3", "notes": "本次更新说明", "published_at": "2026-11-16T10:00:00+08:00"}
+   ```
+   `version_code` 必须**大于** App 当前的 versionCode(pubspec 里的 `+N`)。
+4. 校验:`curl -H "Authorization: Bearer <设备令牌>" https://www.example.com:8000/jingling/v1/app/version`
+
+### 手机端
+
+- 设置 → **检查更新** → 显示新版本与说明 →「下载并安装」→ 下载进度 → 调起系统安装器
+- 首次安装会要求「允许安装未知应用」(系统设置),允许后在同一页面点安装即可
+- 升级保留登录态与本地数据(同签名覆盖安装)
+
+### 接口
+
+- `GET /v1/app/version` (需设备令牌) → `{version_code, version_name, notes, size, download_path}`
+- `GET /v1/app/download` (需设备令牌) → APK 文件流
+- 实现:客户端 `lib/core/update.dart` + 原生 `MainActivity` 的 `jingling/installer` 通道(FileProvider 交接,无第三方插件)

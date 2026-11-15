@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -242,6 +243,44 @@ class ApiClient {
     return UsageSummary.fromJson(json);
   }
 
+  // ---------- OTA(M6+) ----------
+
+  /// 查询服务器发布的最新 App 版本;没发布过返回 null。
+  Future<AppRelease?> appVersion() async {
+    try {
+      final json = await _guard(() async =>
+          _decode(await _client.get(_uri('/v1/app/version'), headers: _headers())));
+      return AppRelease.fromJson(json);
+    } on ApiException {
+      return null;
+    }
+  }
+
+  /// 下载 APK 到指定路径,onProgress 回调 0..1。
+  Future<void> downloadApk(String savePath, {void Function(double progress)? onProgress}) async {
+    final request = http.Request('GET', _uri('/v1/app/download'))
+      ..headers.addAll(_headers(jsonContentType: false));
+    final response = await _guard(() => _client.send(request));
+    if (response.statusCode != 200) {
+      throw ApiException('下载安装包失败(HTTP ${response.statusCode})');
+    }
+    final total = response.contentLength ?? 0;
+    var received = 0;
+    final file = File(savePath);
+    final sink = file.openWrite();
+    try {
+      await for (final chunk in response.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0 && onProgress != null) {
+          onProgress(received / total);
+        }
+      }
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
+  }
   // ---------- 记忆(M5) ----------
 
   Future<List<MemoryNote>> memories({String? query, int limit = 100}) async {

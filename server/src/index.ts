@@ -4,6 +4,7 @@ import { ApiError, PairingService, makeAuthGuard, registerPairingRoute } from '.
 import { loadConfig, loadDotEnv, type Config } from './config.js';
 import { DEV_CORS_HEADERS } from './cors.js';
 import { openDb, purgeEphemeral, type Db } from './db.js';
+import { registerAppRoutes } from './routes/app.js';
 import { registerConversationRoutes, GenerationRegistry } from './routes/conversations.js';
 import { registerFileRoutes } from './routes/files.js';
 import { HarnessHub, registerHarnessBridge, registerHarnessRoutes } from './routes/harness.js';
@@ -84,6 +85,7 @@ export function buildApp(
     await registerFileRoutes(secured, ctx);
     await registerVoiceRoutes(secured, { config, db, mock: config.mock });
     registerMemoryRoutes(secured, { db });
+    registerAppRoutes(secured, config);
     registerHarnessRoutes(secured, harnessHub, config);
   });
 

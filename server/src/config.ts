@@ -44,6 +44,8 @@ export interface Config {
   ttsPriceCnyPerUnit: number;
   /** http_request 工具的域名白名单(为空 = 禁用该工具) */
   httpAllowlist: string[];
+  /** OTA 发布目录(jingling.apk + release.json) */
+  appReleaseDir: string;
 
   // ---- M3:dsh 远程开发桥 ----
   /** 桥接令牌(与设备令牌分离);为空则桥接端点关闭 */
@@ -78,6 +80,7 @@ const EnvSchema = z.object({
   ASR_PRICE_CNY_PER_HOUR: z.string().optional(),
   TTS_PRICE_CNY_PER_10K_CHARS: z.string().optional(),
   HTTP_ALLOWLIST: z.string().optional(),
+  APP_RELEASE_DIR: z.string().optional(),
   BRIDGE_TOKEN: z.string().optional(),
 });
 
@@ -146,6 +149,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .split(',')
       .map((entry) => entry.trim().toLowerCase())
       .filter((entry) => entry !== ''),
+    appReleaseDir: e.APP_RELEASE_DIR?.trim() || './data/app',
     bridgeToken: e.BRIDGE_TOKEN?.trim() ?? '',
   };
   if (!config.mock && config.deepseekApiKey === '') {

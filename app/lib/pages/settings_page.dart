@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/providers.dart';
+import '../core/update.dart';
 import 'computer_page.dart';
 import 'memory_page.dart';
 import 'usage_page.dart';
@@ -14,6 +15,7 @@ class SettingsPage extends ConsumerStatefulWidget {
 }
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
+  String _versionLabel = '';
   final TextEditingController _serverUrl = TextEditingController();
   bool _saving = false;
 
@@ -23,6 +25,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final url = ref.read(settingsProvider).value?.serverUrl;
       if (url != null && mounted) _serverUrl.text = url;
+      UpdateService.currentVersion().then((version) {
+        if (mounted) setState(() => _versionLabel = 'v ()');
+      });
     });
   }
 
@@ -38,6 +43,105 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('服务器地址已保存')));
+  }
+
+
+  Future<void> _checkUpdate() async {
+    final api = ref.read(apiProvider);
+    if (api == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final latest = await UpdateService.check(api);
+    if (!mounted) return;
+    if (latest == null) {
+      messenger.showSnackBar(const SnackBar(content: Text('已是最新版本')));
+      return;
+    }
+    final sizeMb = (latest.size / 1024 / 1024).toStringAsFixed(1);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('发现新版本 v${latest.versionName}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('大小:$sizeMb MB'),
+              if (latest.notes.trim().isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(latest.notes.trim()),
+              ],
+              const SizedBox(height: 8),
+              const Text('下载后点安装即可升级,不需要连电脑。', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('下载并安装')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final progress = ValueNotifier<double>(0);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('正在下载更新…'),
+        content: ValueListenableBuilder<double>(
+          valueListenable: progress,
+          builder: (builderContext, value, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(value: value <= 0 ? null : value),
+              const SizedBox(height: 8),
+              Text('${(value * 100).toStringAsFixed(0)}%'),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final path = await UpdateService.download(
+        api,
+        release: latest,
+        onProgress: (value) => progress.value = value,
+      );
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+      final canInstall = await UpdateService.canInstall();
+      if (!canInstall) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('需要开启安装权限'),
+            content: const Text('系统需要允许「鲸灵」安装应用才能升级。点「去开启」后在列表里允许鲸灵,再回来重新检查更新。'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('知道了')),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  UpdateService.openInstallPermission();
+                },
+                child: const Text('去开启'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+      await UpdateService.install(path);
+    } catch (error) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+      messenger.showSnackBar(SnackBar(content: Text('更新失败:$error')));
+    }
   }
 
   Future<void> _showUsage() async {
@@ -108,6 +212,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onTap: () => ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('打开任一会话,使用输入框左侧麦克风;朗读开关在会话右上角')),
             ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.system_update_outlined),
+            title: const Text('检查更新'),
+            subtitle: Text(_versionLabel.isEmpty ? '从服务器下载新版本并安装(免插线)' : '当前 $_versionLabel · 从服务器下载并安装'),
+            onTap: _checkUpdate,
           ),
           const Divider(height: 32),
           Text('服务器', style: theme.textTheme.titleSmall),
