@@ -23,6 +23,7 @@ class HarnessState {
     this.confirm,
     this.confirmRemaining = 0,
     this.permissionMode = 'workspace-write',
+    this.confirmTools = false,
     this.viewingTask = false,
     this.viewingSession = false,
     this.history = const [],
@@ -43,6 +44,8 @@ class HarnessState {
   final int confirmRemaining;
   /// 远程会话的沙箱权限模式:workspace-write(默认)或 danger-full-access。
   final String permissionMode;
+  /// 是否对每次工具调用逐条确认(默认关;本地设为完全访问时桥接会自动让位)。
+  final bool confirmTools;
   /// 当前是否在「任务视图」;false 表示在会话列表视图(可切换会话)。
   final bool viewingTask;
   /// 是否正在查看某个 dsh 会话的历史。
@@ -84,6 +87,7 @@ class HarnessState {
     String? permissionMode,
     bool? viewingTask,
     bool? viewingSession,
+    bool? confirmTools,
     List<HarnessMessage>? history,
     bool? historyLoading,
   }) =>
@@ -103,6 +107,7 @@ class HarnessState {
         confirm: identical(confirm, _unset) ? this.confirm : confirm as HarnessConfirmRequest?,
         confirmRemaining: confirmRemaining ?? this.confirmRemaining,
         permissionMode: permissionMode ?? this.permissionMode,
+        confirmTools: confirmTools ?? this.confirmTools,
         viewingTask: viewingTask ?? this.viewingTask,
         viewingSession: viewingSession ?? this.viewingSession,
         history: history ?? this.history,
@@ -183,6 +188,8 @@ class HarnessController extends Notifier<HarnessState> {
   }
 
   void setPermissionMode(String mode) => state = state.copyWith(permissionMode: mode);
+
+  void setConfirmTools(bool enabled) => state = state.copyWith(confirmTools: enabled);
 
   void selectSession(String sessionId) {
     state = state.copyWith(selectedSessionId: sessionId);
@@ -275,6 +282,7 @@ class HarnessController extends Notifier<HarnessState> {
         sessionId: sessionId,
         prompt: prompt.trim(),
         permissionMode: state.permissionMode,
+        requireApproval: state.confirmTools,
       );
       if (taskId.isEmpty) throw ApiException('服务器未返回 task_id');
       state = state.copyWith(taskId: taskId);

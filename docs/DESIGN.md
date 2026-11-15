@@ -334,3 +334,5 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 - 官方开源 Demo(参考实现):https://github.com/deepseek-ai/chat-demo
 
 | 2026-11-15 | M3 工具确认与权限 | 逐条确认走 `tools/pre-execute`(可拿参数,超时/断线 fail-closed);沙箱越界由 `permissionPresets` 会话级预设控制,手机端提供「沙箱内/完全访问」开关。生产实测:批准后文件真实写入,拒绝/超时文件不写入 |
+
+| 2026-11-15 | M3 本地优先 | 远程逐条确认不得压过本地用户:会话为「完全访问」时桥接不拦截;手机派任务默认不逐条确认,确认改为可选开关。原因:远程门曾把本机 dsh 的每个工具调用都拦成拒绝,导致本地无法操作 |

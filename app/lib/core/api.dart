@@ -266,7 +266,7 @@ class ApiClient {
     String? cwd,
     String? agentPreset,
     String? permissionMode,
-    bool requireApproval = true,
+    bool requireApproval = false,
   }) async {
     final json = await _guard(() async => _decode(await _client.post(
           _uri('/v1/harness/tasks'),

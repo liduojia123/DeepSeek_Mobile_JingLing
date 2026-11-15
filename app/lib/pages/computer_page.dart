@@ -3,6 +3,8 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/harness_providers.dart';
 import '../models/harness.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+
 import '../widgets/thinking_block.dart';
 
 /// 电脑页:查看电脑上的 dsh 工作区/会话,远程派任务、看实时输出、逐条确认工具调用。
@@ -390,7 +392,24 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
             ),
           ),
         if (state.output.isNotEmpty)
-          SelectableText(state.output, style: theme.textTheme.bodyMedium),
+          MarkdownBody(
+            data: state.output,
+            selectable: false,
+            styleSheet: MarkdownStyleSheet(
+              p: theme.textTheme.bodyMedium,
+              code: theme.textTheme.bodySmall?.copyWith(
+                backgroundColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+              ),
+              codeblockDecoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              blockquoteDecoration: BoxDecoration(
+                border: Border(left: BorderSide(color: theme.colorScheme.outline, width: 3)),
+              ),
+              listBullet: theme.textTheme.bodyMedium,
+            ),
+          ),
         if (state.running)
           Padding(
             padding: const EdgeInsets.only(top: 12),
@@ -489,6 +508,15 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
             onSelected: state.running
                 ? null
                 : (_) => ref.read(harnessProvider.notifier).setPermissionMode('danger-full-access'),
+          ),
+          const SizedBox(width: 8),
+          FilterChip(
+            label: const Text('逐条确认', style: TextStyle(fontSize: 11)),
+            visualDensity: VisualDensity.compact,
+            selected: state.confirmTools,
+            onSelected: state.running
+                ? null
+                : (value) => ref.read(harnessProvider.notifier).setConfirmTools(value),
           ),
           const SizedBox(width: 8),
           Expanded(

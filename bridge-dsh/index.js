@@ -215,6 +215,7 @@ export function apply(ctx, config = {}) {
   async function handleApproval(req, next) {
     const sessionId = req?.agent?.session?.id
     if (!sessionId || !confirmSessions.has(sessionId)) return next()
+    if (permissionPresetOf(req.agent) === 'danger-full-access') return next()
     // 手机已在 pre-execute 里批准过这次调用 → 沙箱升级确认自动放行,不再弹第二次
     if (req.callId !== undefined && approvedCalls.delete(String(req.callId))) return 'allowed-once'
     const decision = await askPhone({
@@ -232,10 +233,22 @@ export function apply(ctx, config = {}) {
    * 核心确认路径:在工具真正执行前拦下,把工具名+参数发给手机。
    * 返回 next() 放行;返回 deny 拒绝(fail-closed)。
    */
+  /** 会话当前的权限预设名;拿不到返回空串。 */
+  function permissionPresetOf(agent) {
+    try {
+      const value = svc('permissionPresets')?.current?.(agent?.session)
+      return typeof value === 'string' ? value : ''
+    } catch {
+      return ''
+    }
+  }
+
   async function handlePreExecute(exec, next) {
     const sessionId = exec?.agent?.session?.id
     if (!sessionId || !confirmSessions.has(sessionId)) return next()
     if (!taskIdOfSession(sessionId)) return next()
+    // 本地最高:电脑端把会话设为「完全访问」时,远程逐条确认门自动让位(本地用户优先)
+    if (permissionPresetOf(exec.agent) === 'danger-full-access') return next()
     const decision = await askPhone({
       sessionId,
       tool: exec?.name ?? 'tool',
@@ -493,7 +506,8 @@ export function apply(ctx, config = {}) {
     ensureSubscription(sessionId, taskId)
     tasks.set(taskId, { sessionId, agent })
     // 需要逐条确认时,把该会话的策略切到 ask(否则历史里的 never 会直接放行/拒绝)
-    if (params.require_approval) {
+    // 本地优先:完全访问等于本地用户已最高授权,远程逐条确认门不启用
+    if (params.require_approval && params.permission_mode !== 'danger-full-access') {
       confirmSessions.add(sessionId)
       try {
         svc('approval')?.setPolicy?.(agent, 'ask')
