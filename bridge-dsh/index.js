@@ -336,6 +336,30 @@ export function apply(ctx, config = {}) {
           persisted: Boolean(row?.persisted),
         }
       })
+
+      // 标题不在 header 里,由 session-title 折叠而来;一次批量读取,失败不影响列表
+      try {
+        const ids = result.sessions.map((session) => session.id).filter((id) => id !== '')
+        const snapshots = await svc('sessionQuery')?.readTitleSnapshots?.(ids)
+        result.diagnostics.titleProbe = {
+          count: Array.isArray(snapshots) ? snapshots.length : 0,
+          fulfilled: (snapshots ?? []).filter((item) => item?.status === 'fulfilled').length,
+        }
+        const titles = new Map()
+        for (const item of snapshots ?? []) {
+          if (item?.status === 'fulfilled') {
+            const title = item.value?.title?.title
+            const sessionId = item.value?.session?.id
+            if (title && sessionId) titles.set(String(sessionId), String(title))
+          }
+        }
+        for (const session of result.sessions) {
+          const title = titles.get(session.id)
+          if (title) session.title = title
+        }
+      } catch (error) {
+        result.diagnostics.titlesError = String(error?.message ?? error)
+      }
     } catch (error) {
       result.diagnostics.sessionsError = String(error?.message ?? error)
       // 兜底:至少把当前在跑的会话报上去

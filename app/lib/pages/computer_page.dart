@@ -174,6 +174,18 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
     );
   }
 
+  /// 把毫秒时间戳/ISO 字符串显示成 月-日 时:分。
+  String _formatTime(String raw) {
+    final value = int.tryParse(raw);
+    final time = value == null
+        ? DateTime.tryParse(raw)
+        : DateTime.fromMillisecondsSinceEpoch(value);
+    if (time == null) return '';
+    final local = time.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
   Widget _sessionTile(HarnessSession session, bool selected) {
     return ListTile(
       dense: true,
@@ -183,8 +195,13 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
       ),
       title: Text(session.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
-        '${session.id.substring(0, session.id.length.clamp(0, 20))}…'
-        '${session.live ? ' · 运行中' : ''}',
+        [
+          if ((session.cwd ?? '').isNotEmpty) session.cwd!,
+          if (session.live) '运行中',
+          if (session.createdAt != null) _formatTime(session.createdAt!),
+        ].join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
       onTap: () => ref.read(harnessProvider.notifier).selectSession(session.id),
     );
