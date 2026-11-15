@@ -112,3 +112,42 @@ db.exec(\"VACUUM INTO '/app/data/backup-'+Date.now()+'.db'\");"
 | 容器 unhealthy | `sudo docker logs jingling-jingling-1`;看是否 `EADDRINUSE` 或 env 缺失 |
 | 配对码无效 | 重启过容器会换码;用上面 `grep 配对码` 取最新 |
 | 磁盘占用 | `docker system df`;镜像多了 `sudo docker image prune -f` |
+
+## M3:dsh 远程开发桥(生产)
+
+### 服务器
+1. 在 `/opt/jingling/.env` 增加(令牌与设备令牌分离,随机 48 位十六进制):
+   ```
+   BRIDGE_TOKEN=<随机令牌>
+   ```
+2. 重新部署:`sudo docker compose up -d --build`。
+3. 验证(服务器本机):
+   ```
+   curl -s http://127.0.0.1:3001/health
+   ```
+   公开地址:`https://www.example.com:8000/jingling`(WSS 走同一路径,由 Caddy 透传)。
+
+### 电脑端插件
+1. 插件目录 `bridge-dsh/`,用 **Plugins > Add plugin** 或 `plugin_manager install_bundle` 安装。
+2. 写 `~/.dsh/jingling-bridge.json`(本地文件优先级最高,换服务器不用改插件包):
+   ```json
+   {
+     "serverUrl": "https://www.example.com:8000/jingling",
+     "bridgeToken": "<与服务器 BRIDGE_TOKEN 相同>",
+     "nodeName": "我的电脑",
+     "confirmTimeoutSec": 15
+   }
+   ```
+3. 启用插件后,服务器上应能看到节点:
+   ```
+   GET /jingling/v1/harness/nodes   (Authorization: Bearer <设备令牌>)
+   ```
+   返回 `online: true` 即桥接成功。
+
+### 手机端
+会话列表页右上角「电脑」图标 → 选工作区/会话 → 派任务 → 实时输出;敏感工具调用会弹确认卡片(15s 未确认自动拒绝)。
+
+### 注意
+- 桥接只出站,电脑不开任何入站端口。
+- 审批请求不携带工具参数(dsh 限制),手机上只展示工具名与理由。
+- 历史会话恢复能力受 dsh 会话校验限制,建议对**当前正在运行的会话**派任务。

@@ -58,7 +58,8 @@ export function apply(ctx, config = {}) {
   }
 
   const local = readLocalConfig()
-  const cfg = { ...DEFAULTS, ...pickDefined(local), ...pickDefined(config) }
+  // 优先级:DEFAULTS < 插件行 config < ~/.dsh/jingling-bridge.json(本地文件最高,便于换服务器不改包)
+  const cfg = { ...DEFAULTS, ...pickDefined(config), ...pickDefined(local) }
   if (!cfg.bridgeToken) {
     log('未配置 bridgeToken(插件配置或 ~/.dsh/jingling-bridge.json),桥接不启动')
     return () => {}
