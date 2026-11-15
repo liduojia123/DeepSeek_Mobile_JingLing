@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS message (
 CREATE INDEX IF NOT EXISTS idx_message_conversation ON message(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_message_parent ON message(parent_id);
 
+-- M5:memory 工具沉淀的个人记忆
+CREATE TABLE IF NOT EXISTS memory_note (
+  id         TEXT PRIMARY KEY,
+  content    TEXT NOT NULL,
+  tags       TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_note_updated ON memory_note(updated_at);
+
 -- tokens_in/tokens_out 是对 DESIGN §5.2 的小扩展:F9 需要按天统计 token,
 -- 只在 usage_log.quantity 里放总 token 无法还原拆分。
 CREATE TABLE IF NOT EXISTS usage_log (
@@ -118,6 +128,7 @@ export function openDb(dbPath: string): Db {
   db.exec(SCHEMA);
   // M2 新增:assistant 的 server_tool_calls 原始块(含阅读链接的 signature),供下轮回传
   ensureColumn(db, 'message', 'server_blocks_json', "server_blocks_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, 'message', 'tool_blocks_json', "tool_blocks_json TEXT NOT NULL DEFAULT '[]'");
   return db;
 }
 

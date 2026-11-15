@@ -334,6 +334,23 @@ class UsageDay {
   final double cost;
 }
 
+class UsageKindRow {
+  const UsageKindRow({required this.kind, required this.calls, required this.quantity, required this.cost});
+
+  final String kind;
+  final int calls;
+  final double quantity;
+  final double cost;
+}
+
+class UsageTopConversation {
+  const UsageTopConversation({required this.title, required this.cost, required this.calls});
+
+  final String title;
+  final double cost;
+  final int calls;
+}
+
 class UsageSummary {
   const UsageSummary({
     required this.days,
@@ -341,6 +358,17 @@ class UsageSummary {
     required this.tokensIn,
     required this.tokensOut,
     required this.cost,
+    this.byKind = const [],
+    this.topConversations = const [],
+    this.todayCost = 0,
+    this.todayTokensIn = 0,
+    this.todayTokensOut = 0,
+    this.toolCalls = 0,
+    this.budgetDaily = 0,
+    this.budgetUsedToday = 0,
+    this.budgetRemaining,
+    this.budgetUsedPercent = 0,
+    this.budgetExceeded = false,
   });
 
   final List<UsageDay> days;
@@ -348,6 +376,17 @@ class UsageSummary {
   final int tokensIn;
   final int tokensOut;
   final double cost;
+  final List<UsageKindRow> byKind;
+  final List<UsageTopConversation> topConversations;
+  final double todayCost;
+  final int todayTokensIn;
+  final int todayTokensOut;
+  final int toolCalls;
+  final double budgetDaily;
+  final double budgetUsedToday;
+  final double? budgetRemaining;
+  final int budgetUsedPercent;
+  final bool budgetExceeded;
 
   factory UsageSummary.fromJson(Map<String, dynamic> json) {
     final totals = (json['totals'] as Map?) ?? const {};
@@ -366,6 +405,32 @@ class UsageSummary {
       tokensIn: (totals['tokens_in'] as num?)?.toInt() ?? 0,
       tokensOut: (totals['tokens_out'] as num?)?.toInt() ?? 0,
       cost: (totals['cost'] as num?)?.toDouble() ?? 0,
+      byKind: ((json['by_kind'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => UsageKindRow(
+                kind: (item['kind'] as String?) ?? '',
+                calls: (item['calls'] as num?)?.toInt() ?? 0,
+                quantity: (item['quantity'] as num?)?.toDouble() ?? 0,
+                cost: (item['cost'] as num?)?.toDouble() ?? 0,
+              ))
+          .toList(growable: false),
+      topConversations: ((json['top_conversations'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => UsageTopConversation(
+                title: (item['title'] as String?) ?? '(无标题)',
+                cost: (item['cost'] as num?)?.toDouble() ?? 0,
+                calls: (item['calls'] as num?)?.toInt() ?? 0,
+              ))
+          .toList(growable: false),
+      todayCost: ((json['today'] as Map?)?['cost'] as num?)?.toDouble() ?? 0,
+      todayTokensIn: ((json['today'] as Map?)?['tokens_in'] as num?)?.toInt() ?? 0,
+      todayTokensOut: ((json['today'] as Map?)?['tokens_out'] as num?)?.toInt() ?? 0,
+      toolCalls: (json['tool_calls'] as num?)?.toInt() ?? 0,
+      budgetDaily: ((json['budget'] as Map?)?['daily_cny'] as num?)?.toDouble() ?? 0,
+      budgetUsedToday: ((json['budget'] as Map?)?['used_today'] as num?)?.toDouble() ?? 0,
+      budgetRemaining: ((json['budget'] as Map?)?['remaining_cny'] as num?)?.toDouble(),
+      budgetUsedPercent: ((json['budget'] as Map?)?['used_percent'] as num?)?.toInt() ?? 0,
+      budgetExceeded: ((json['budget'] as Map?)?['exceeded'] ?? false) == true,
     );
   }
 }

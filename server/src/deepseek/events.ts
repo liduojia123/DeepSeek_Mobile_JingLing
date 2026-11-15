@@ -33,7 +33,7 @@ export const ThinkingEndEvent = z.object({
 export const ToolProgressEvent = z.object({
   type: z.literal('tool_progress'),
   tool: z.string().min(1),
-  phase: z.enum(['searching', 'reading', 'fetching', 'finding']),
+  phase: z.enum(['searching', 'reading', 'fetching', 'finding', 'tool']),
   action_type: z.string().optional(),
   queries: z.array(z.string()).optional(),
   url: z.string().optional(),
@@ -177,6 +177,13 @@ export interface ChatUsage {
 }
 
 /** DeepSeek 流的归一化产物。thinking/text 可能单独出现,usage 只出现在末尾块。 */
+export interface FunctionToolCallDelta {
+  index: number;
+  id?: string;
+  name?: string;
+  argumentsDelta?: string;
+}
+
 export interface ChatDelta {
   thinking?: string;
   text?: string;
@@ -185,6 +192,8 @@ export interface ChatDelta {
   title?: string;
   annotations?: CitationDelta[];
   toolCalls?: ToolCallBlock[];
+  /** 客户端工具的流式分片(按 index 聚合) */
+  functionToolCalls?: FunctionToolCallDelta[];
   toolEvent?: { type: string; step?: number };
 }
 
@@ -293,6 +302,23 @@ export function normalizeDeepSeekChunk(chunk: unknown): ChatDelta | null {
       if (text !== undefined && text !== '') delta.text = text;
       const title = asString(inner.title);
       if (title !== undefined && title !== '') delta.title = title;
+      if (Array.isArray(inner.tool_calls)) {
+        const deltas: FunctionToolCallDelta[] = [];
+        for (const item of inner.tool_calls) {
+          const call = asObject(item);
+          if (!call) continue;
+          const fn = asObject(call.function);
+          if (!fn) continue;
+          const index = asCount(call.index) ?? 0;
+          deltas.push({
+            index,
+            id: asString(call.id),
+            name: asString(fn.name),
+            argumentsDelta: asString(fn.arguments),
+          });
+        }
+        if (deltas.length > 0) delta.functionToolCalls = deltas;
+      }
       const annotations = normalizeAnnotations(inner.annotations);
       if (annotations.length > 0) delta.annotations = annotations;
       const toolCalls = normalizeToolCalls(inner.server_tool_calls);

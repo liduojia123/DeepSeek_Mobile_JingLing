@@ -1071,3 +1071,94 @@ test('M4 语音:MOCK TTS 返回 wav 音频并记录 tts 用量(汉字按 2 计�
   assert.equal(row!.quantity, 4, '「你好」两个汉字 = 4 计费字符');
   assert.ok(row!.cost > 0);
 });
+// ---------- M5 工具与用量 ----------
+
+test('M5 memory:MOCK「记住」落库,「查记忆」触发 memory_search 工具', async () => {
+  const { app, db } = makeHarness();
+  const headers = auth(await pair(app));
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+
+  const save = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '记住:我喜欢喝美式' },
+    headers,
+  });
+  assert.equal(save.statusCode, 200);
+  assert.match(save.payload, /event: tool_result/);
+  assert.match(save.payload, /memory_save/);
+  const rows = db.prepare('SELECT content FROM memory_note').all() as Array<{ content: string }>;
+  assert.equal(rows.length, 1, '应写入一条记忆');
+  assert.match(rows[0]!.content, /美式/);
+
+  // 新会话里查记忆(同一会话的历史里已有 tool 结果,MOCK 启发式不会再发工具调用)
+  const convId2 = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+  const search = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId2}/chat`,
+    payload: { content: '查记忆:美式' },
+    headers,
+  });
+  assert.equal(search.statusCode, 200);
+  assert.match(search.payload, /memory_search/);
+  const after = db.prepare('SELECT COUNT(*) AS n FROM memory_note').get() as { n: number };
+  assert.equal(after.n, 1, '查询不应新增记忆');
+});
+
+test('M5 预算熔断:今日花费达到预算 → 402 budget_exceeded', async () => {
+  const { app, db } = makeHarness({ dailyBudgetCny: 0.01 });
+  const headers = auth(await pair(app));
+  const convId = (
+    (await app.inject({ method: 'POST', url: '/v1/conversations', payload: {}, headers })).json() as { id: string }
+  ).id;
+  db.prepare(
+    "INSERT INTO usage_log (id, ts, kind, quantity, cost) VALUES ('budget-1', ?, 'model', 1, 0.02)",
+  ).run(new Date().toISOString());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: `/v1/conversations/${convId}/chat`,
+    payload: { content: '你好' },
+    headers,
+  });
+  assert.equal(response.statusCode, 402);
+  const body = response.json() as { error: { code: string; message: string } };
+  assert.equal(body.error.code, 'budget_exceeded');
+  assert.match(body.error.message, /预算/);
+});
+
+test('M5 http_request:白名单外拒绝,白名单内真实调用', async () => {
+  const server = createServer((_req, res: ServerResponse) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('hello from local service');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  try {
+    const { db, config } = makeHarness({ httpAllowlist: ['127.0.0.1'] });
+    const { executeClientTool } = await import('../src/agent/tools.js');
+
+    const allowed = await executeClientTool(config, db, {
+      id: 'call-a',
+      name: 'http_request',
+      arguments: JSON.stringify({ url: `http://127.0.0.1:${port}/status` }),
+    });
+    assert.equal(allowed.ok, true, allowed.content);
+    assert.match(allowed.content, /hello from local service/);
+
+    const blocked = await executeClientTool(config, db, {
+      id: 'call-b',
+      name: 'http_request',
+      arguments: JSON.stringify({ url: 'https://example.com/' }),
+    });
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.content, /白名单/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

@@ -1,9 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../core/api.dart';
 import '../core/providers.dart';
-import '../models/models.dart';
+import 'usage_page.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -40,55 +39,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Future<void> _showUsage() async {
-    final api = ref.read(apiProvider);
-    if (api == null) return;
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('用量'),
-        content: FutureBuilder<UsageSummary>(
-          future: api.usage(days: 30),
-          builder: (builderContext, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const SizedBox(
-                height: 60,
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-            if (snapshot.hasError) {
-              final error = snapshot.error;
-              return Text(error is ApiException ? error.message : '读取用量失败');
-            }
-            final usage = snapshot.data;
-            if (usage == null) return const Text('暂无用量');
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('最近 30 天 · ${usage.calls} 次调用'),
-                const SizedBox(height: 8),
-                Text('输入 ${usage.tokensIn} tokens'),
-                Text('输出 ${usage.tokensOut} tokens'),
-                Text('估算费用 ¥${usage.cost.toStringAsFixed(4)}'),
-                const SizedBox(height: 12),
-                Text('每日', style: Theme.of(dialogContext).textTheme.labelMedium),
-                const SizedBox(height: 4),
-                for (final day in usage.days.reversed.take(7))
-                  Text(
-                    '${day.date}  ${day.calls} 次 · ¥${day.cost.toStringAsFixed(4)}',
-                    style: Theme.of(dialogContext).textTheme.bodySmall,
-                  ),
-              ],
-            );
-          },
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('关闭')),
-        ],
-      ),
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const UsagePage()),
     );
   }
-
   Future<void> _unpair() async {
     final confirmed = await showDialog<bool>(
       context: context,

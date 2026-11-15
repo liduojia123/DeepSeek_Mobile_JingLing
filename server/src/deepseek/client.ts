@@ -2,11 +2,15 @@ import type { Config } from '../config.js';
 import { normalizeDeepSeekChunk, type ChatDelta } from './events.js';
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  /** 纯文本,或 M2 的富内容数组(文件引用: {type:"file", file_id}) */
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  /** 纯文本、富内容数组(文件引用),或 tool 消息的字符串结果 */
   content: string | Array<Record<string, unknown>>;
   /** M2:上一轮 assistant 的 server_tool_calls 块原样回传,阅读链接的网页才会拼回上下文 */
   server_tool_calls?: unknown[];
+  /** M5:客户端工具调用声明(assistant 消息) */
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  /** M5:tool 消息对应的调用 id */
+  tool_call_id?: string;
 }
 
 export class UpstreamError extends Error {
@@ -28,6 +32,8 @@ export interface StreamChatParams {
   search?: boolean;
   /** 本次请求是否启用思考(默认启用) */
   thinking?: boolean;
+  /** 客户端工具(OpenAI function 格式);为空则不声明 */
+  tools?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -54,6 +60,10 @@ export async function* streamChatCompletion(params: StreamChatParams): AsyncGene
   if (searchOn && config.enableWebSearch) tools.push({ type: 'deepseek_web_search', name: 'deepseek_web_search' });
   if (searchOn && config.enableReadUrl) tools.push({ type: 'deepseek_read_url', name: 'deepseek_read_url' });
   if (tools.length > 0) body.tools = tools;
+  // 客户端工具(memory/http_request):标准 function calling,由我们本地执行
+  if (params.tools !== undefined && params.tools.length > 0) {
+    body.tools = [...(Array.isArray(body.tools) ? (body.tools as unknown[]) : []), ...params.tools];
+  }
   if (config.safetyLevel !== 'off') body.safety_check = { level: config.safetyLevel };
   if (config.titleEnabled) body.title = { enabled: true };
 

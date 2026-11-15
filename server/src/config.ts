@@ -42,6 +42,8 @@ export interface Config {
   asrPriceCnyPerSecond: number;
   /** 语音合成单价(元/计费字符):1.5 元/万字符(汉字算 2) */
   ttsPriceCnyPerUnit: number;
+  /** http_request 工具的域名白名单(为空 = 禁用该工具) */
+  httpAllowlist: string[];
 
   // ---- M3:dsh 远程开发桥 ----
   /** 桥接令牌(与设备令牌分离);为空则桥接端点关闭 */
@@ -75,6 +77,7 @@ const EnvSchema = z.object({
   OCR_PRICE_CNY_PER_PAGE: z.string().optional(),
   ASR_PRICE_CNY_PER_HOUR: z.string().optional(),
   TTS_PRICE_CNY_PER_10K_CHARS: z.string().optional(),
+  HTTP_ALLOWLIST: z.string().optional(),
   BRIDGE_TOKEN: z.string().optional(),
 });
 
@@ -139,6 +142,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ocrPriceCnyPerPage: num(e.OCR_PRICE_CNY_PER_PAGE, 1.5 / 1000),
     asrPriceCnyPerSecond: num(e.ASR_PRICE_CNY_PER_HOUR, 0.39) / 3600,
     ttsPriceCnyPerUnit: num(e.TTS_PRICE_CNY_PER_10K_CHARS, 1.5) / 10_000,
+    httpAllowlist: (e.HTTP_ALLOWLIST ?? '')
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry !== ''),
     bridgeToken: e.BRIDGE_TOKEN?.trim() ?? '',
   };
   if (!config.mock && config.deepseekApiKey === '') {

@@ -286,7 +286,7 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | M1 客户端核心 | Flutter 四页、流式渲染、分支 UI、基础操作包 | 真机/Chrome 全流程 | HANDOFF §M1 |
 | M2 搜索与文件 ✅ | 搜索过程卡片、引用、文件上传解析 | 带 URL 能读网页;传 PDF 能答 | `docs/HANDOFF-M2.md`(完成 2026-11-15) || M3 dsh 远程开发桥 | spike→插件→服务器中继→电脑页 | 手机派任务+批准工具调用,任务完成 | §4.4 + 届时另出 |
 | M4 语音闭环 | ASR/TTS 管道、录音 UI、播放打断、长按朗读 | 全程语音完成一轮问答 | `HANDOFF-M4.md`(服务端+客户端已完成,真机麦克风验收待做) |
-| M5 工具与用量 | memory + http_request + 预算熔断 + 用量看板 | "记住我用 XX,下次直接用"生效 | 届时另出 |
+| M5 工具与用量 | memory + http_request + 预算熔断 + 用量看板 | "记住我用 XX,下次直接用"生效 | ✅ `HANDOFF-M5.md`(生产已验证) |
 | M6 打包发布 | APK、HTTPS(备案通过后)、证书锁定、备份脚本 | 手机安装即用 | 届时另出 |
 
 ## 10. 决策记录
@@ -336,3 +336,5 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | M3 工具确认与权限 | 逐条确认走 `tools/pre-execute`(可拿参数,超时/断线 fail-closed);沙箱越界由 `permissionPresets` 会话级预设控制,手机端提供「沙箱内/完全访问」开关。生产实测:批准后文件真实写入,拒绝/超时文件不写入 |
 
 | 2026-11-15 | M3 本地优先 | 远程逐条确认不得压过本地用户:会话为「完全访问」时桥接不拦截;手机派任务默认不逐条确认,确认改为可选开关。原因:远程门曾把本机 dsh 的每个工具调用都拦成拒绝,导致本地无法操作 |
+
+| 2026-11-15 | M5 工具与用量 | memory / http_request 用标准 function calling 在服务端本地执行(DeepSeek 服务端工具不受影响,可并存);工具调用以 `assistant(tool_calls)+tool` 成对落 `message.tool_blocks_json` 供历史回放;预算熔断在生成前按 UTC 当日累计检查,超出返回 402 |

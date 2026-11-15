@@ -4,6 +4,8 @@ export interface MockStreamParams {
   messages: ReadonlyArray<{ role: string; content: unknown }>;
   signal: AbortSignal;
   delayMs: number;
+  /** M5:启用客户端工具时,MOCK 也要能演示 memory 工具调用 */
+  toolsEnabled?: boolean;
 }
 
 const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
@@ -39,6 +41,42 @@ const textOf = (content: unknown): string => (typeof content === 'string' ? cont
  * M2 起额外伪造一次搜索结果或读链接结果,让无 key 的前端联调也能看到过程卡片与引用。
  */
 export async function* mockStream(params: MockStreamParams): AsyncGenerator<ChatDelta> {
+  // M5:MOCK 下演示客户端工具循环(记住/查记忆/列记忆 → 本地执行 → 再回答)
+  const hasToolResult = params.messages.some((message) => message.role === 'tool');
+  if (params.toolsEnabled === true && !hasToolResult) {
+    const userText = textOf(
+      [...params.messages].reverse().find((message) => message.role === 'user')?.content,
+    ).trim();
+    const saveMatch = /^记住[:：]\s*(.+)$/.exec(userText);
+    const searchMatch = /^查记忆[:：]\s*(.+)$/.exec(userText);
+    let toolName: string | null = null;
+    let toolArgs = '';
+    if (saveMatch) {
+      toolName = 'memory_save';
+      toolArgs = JSON.stringify({ content: saveMatch[1].trim() });
+    } else if (searchMatch) {
+      toolName = 'memory_search';
+      toolArgs = JSON.stringify({ query: searchMatch[1].trim() });
+    } else if (userText === '列记忆') {
+      toolName = 'memory_list';
+      toolArgs = JSON.stringify({});
+    }
+    if (toolName !== null) {
+      await sleep(params.delayMs, params.signal);
+      yield { thinking: '需要调用记忆工具。' };
+      await sleep(params.delayMs, params.signal);
+      const callId = 'call_mock_1';
+      const pieces = toolArgs.match(/.{1,12}/gs) ?? [toolArgs];
+      yield { functionToolCalls: [{ index: 0, id: callId, name: toolName, argumentsDelta: '' }] };
+      for (const piece of pieces) {
+        await sleep(params.delayMs, params.signal);
+        yield { functionToolCalls: [{ index: 0, argumentsDelta: piece }] };
+      }
+      await sleep(params.delayMs, params.signal);
+      yield { usage: { tokens_in: 40, tokens_out: 8, tokens_cached: 0, search_calls: 0, fetch_calls: 0 } };
+      return;
+    }
+  }
   const lastUserMessage = [...params.messages].reverse().find((m) => m.role === 'user');
   const lastUser = textOf(lastUserMessage?.content).trim() || '(空)';
   const quoted = lastUser.length > 60 ? `${lastUser.slice(0, 60)}…` : lastUser;

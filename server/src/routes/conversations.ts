@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { runAgentTurn } from '../agent/loop.js';
+import { budgetState } from '../agent/tools.js';
 import { ApiError } from '../auth.js';
 import type { Config } from '../config.js';
 import { DEV_CORS_HEADERS } from '../cors.js';
@@ -30,6 +31,7 @@ interface MessageRow {
   citations_json: string;
   tool_traces_json: string;
   server_blocks_json: string;
+  tool_blocks_json: string;
   tokens_in: number;
   tokens_out: number;
   cost: number;
@@ -287,6 +289,15 @@ export function registerConversationRoutes(
       }
     }
 
+    // M5:每日预算熔断(生成前检查,避免白跑一次模型)
+    const budget = budgetState(config, db);
+    if (budget.exceeded) {
+      throw new ApiError(
+        402,
+        'budget_exceeded',
+        `今日预算已用完(已用 ¥${budget.used.toFixed(2)} / 预算 ¥${budget.budget.toFixed(2)}),请明天再试或调整 DAILY_BUDGET_CNY`,
+      );
+    }
     // parent_message_id 为 undefined = 未指定(挂到活跃叶子);显式 null = 挂在根节点
     const parentId: string | null =
       body.parent_message_id === undefined ? conv.active_leaf_id : body.parent_message_id;
@@ -382,6 +393,7 @@ export function registerConversationRoutes(
     try {
       result = await runAgentTurn({
         config,
+        db,
         messages,
         signal: controller.signal,
         emit: writeEvent,
@@ -405,6 +417,8 @@ export function registerConversationRoutes(
         citations: [],
         toolTraces: [],
         serverBlocks: [],
+        clientToolCalls: 0,
+        toolBlocks: [],
       };
     }
 
@@ -446,6 +460,7 @@ export function registerConversationRoutes(
             citations: result.citations,
             toolTraces: result.toolTraces,
             serverBlocks: result.serverBlocks,
+            toolBlocks: result.toolBlocks,
             tokensIn: result.tokensIn,
             tokensOut: result.tokensOut,
             cost: result.cost,
@@ -553,6 +568,7 @@ interface InsertMessageParams {
   citations?: unknown;
   toolTraces?: unknown;
   serverBlocks?: unknown;
+  toolBlocks?: unknown;
   tokensIn?: number;
   tokensOut?: number;
   cost?: number;
@@ -563,8 +579,8 @@ function insertMessage(db: Db, params: InsertMessageParams): void {
   db.prepare(
     `INSERT INTO message
        (id, conversation_id, parent_id, role, blocks_json, thinking, citations_json,
-        tool_traces_json, server_blocks_json, tokens_in, tokens_out, cost, stop_reason, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tool_traces_json, server_blocks_json, tool_blocks_json, tokens_in, tokens_out, cost, stop_reason, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     params.id,
     params.conversationId,
@@ -575,6 +591,7 @@ function insertMessage(db: Db, params: InsertMessageParams): void {
     JSON.stringify(params.citations ?? []),
     JSON.stringify(params.toolTraces ?? []),
     JSON.stringify(params.serverBlocks ?? []),
+    JSON.stringify(params.toolBlocks ?? []),
     params.tokensIn ?? 0,
     params.tokensOut ?? 0,
     params.cost ?? 0,
@@ -629,6 +646,28 @@ function buildChatMessages(rows: MessageRow[]): ChatMessage[] {
     );
 
     if (row.role === 'assistant') {
+      // M5:先回放客户端工具调用与结果,再回放最终回答文本,保持模型上下文完整
+      const toolBlocks = parseJson<
+        Array<{ callId?: string; name?: string; arguments?: string; result?: string }>
+      >(row.tool_blocks_json, []);
+      if (toolBlocks.length > 0) {
+        messages.push({
+          role: 'assistant',
+          content: '',
+          tool_calls: toolBlocks.map((block) => ({
+            id: block.callId ?? '',
+            type: 'function' as const,
+            function: { name: block.name ?? '', arguments: block.arguments ?? '{}' },
+          })),
+        });
+        for (const block of toolBlocks) {
+          messages.push({
+            role: 'tool',
+            content: block.result ?? '',
+            tool_call_id: block.callId ?? '',
+          });
+        }
+      }
       if (text === '') continue;
       const message: ChatMessage = { role: 'assistant', content: text };
       const serverBlocks = parseJson<unknown[]>(row.server_blocks_json, []);
