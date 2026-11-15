@@ -452,6 +452,13 @@ export function registerHarnessRoutes(
     });
   });
 
+  secured.get('/v1/harness/sessions/:id/history', async (request) => {
+    const { id } = request.params as { id: string };
+    const query = request.query as Record<string, unknown>;
+    const limit = Number(query.limit ?? 200) || 200;
+    const node = hub.resolveNode(typeof query.node_id === 'string' ? query.node_id : undefined);
+    return await hub.rpc(node, 'session.history', { session_id: id, limit }, 30_000);
+  });
   secured.get('/v1/harness/tasks/:id', async (request) => {
     const { id } = request.params as { id: string };
     const task = hub.getTask(id);

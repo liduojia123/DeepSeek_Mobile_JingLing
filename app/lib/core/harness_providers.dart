@@ -24,6 +24,9 @@ class HarnessState {
     this.confirmRemaining = 0,
     this.permissionMode = 'workspace-write',
     this.viewingTask = false,
+    this.viewingSession = false,
+    this.history = const [],
+    this.historyLoading = false,
   });
 
   final bool loading;
@@ -42,6 +45,11 @@ class HarnessState {
   final String permissionMode;
   /// 当前是否在「任务视图」;false 表示在会话列表视图(可切换会话)。
   final bool viewingTask;
+  /// 是否正在查看某个 dsh 会话的历史。
+  final bool viewingSession;
+  /// 当前会话的历史消息(只读)。
+  final List<HarnessMessage> history;
+  final bool historyLoading;
 
   bool get running => status == 'running';
   HarnessNode? get onlineNode {
@@ -75,6 +83,9 @@ class HarnessState {
     int? confirmRemaining,
     String? permissionMode,
     bool? viewingTask,
+    bool? viewingSession,
+    List<HarnessMessage>? history,
+    bool? historyLoading,
   }) =>
       HarnessState(
         loading: loading ?? this.loading,
@@ -93,6 +104,9 @@ class HarnessState {
         confirmRemaining: confirmRemaining ?? this.confirmRemaining,
         permissionMode: permissionMode ?? this.permissionMode,
         viewingTask: viewingTask ?? this.viewingTask,
+        viewingSession: viewingSession ?? this.viewingSession,
+        history: history ?? this.history,
+        historyLoading: historyLoading ?? this.historyLoading,
       );
 }
 
@@ -141,7 +155,27 @@ class HarnessController extends Notifier<HarnessState> {
   }
 
   /// 回到会话列表(任务继续在电脑上跑,确认卡片仍会弹出)。
-  void showList() => state = state.copyWith(viewingTask: false);
+  void showList() => state = state.copyWith(viewingTask: false, viewingSession: false);
+
+  /// 点进一个 dsh 会话:选中并加载只读历史。
+  Future<void> openSession(String sessionId) async {
+    final api = ref.read(apiProvider);
+    state = state.copyWith(
+      selectedSessionId: sessionId,
+      viewingSession: true,
+      viewingTask: false,
+      historyLoading: true,
+      history: const [],
+      error: null,
+    );
+    if (api == null) return;
+    try {
+      final history = await api.harnessHistory(sessionId);
+      state = state.copyWith(history: history, historyLoading: false);
+    } on ApiException catch (error) {
+      state = state.copyWith(historyLoading: false, error: error.message);
+    }
+  }
 
   /// 从列表回到当前任务视图。
   void openTask() {
@@ -227,6 +261,7 @@ class HarnessController extends Notifier<HarnessState> {
     state = state.copyWith(
       status: 'running',
       viewingTask: true,
+      viewingSession: false,
       thinking: '',
       output: '',
       toolEvents: const [],

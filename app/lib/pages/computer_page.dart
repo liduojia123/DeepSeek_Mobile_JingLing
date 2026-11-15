@@ -83,13 +83,15 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
 
     // 任务视图下,系统返回键先回到会话列表,而不是直接退出电脑页
     return PopScope(
-      canPop: !state.viewingTask,
+      canPop: !(state.viewingTask || state.viewingSession),
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && state.viewingTask) ref.read(harnessProvider.notifier).showList();
+        if (!didPop && (state.viewingTask || state.viewingSession)) {
+          ref.read(harnessProvider.notifier).showList();
+        }
       },
       child: Scaffold(
         appBar: AppBar(
-          leading: state.viewingTask
+          leading: (state.viewingTask || state.viewingSession)
               ? IconButton(
                   tooltip: '会话列表',
                   icon: const Icon(Icons.arrow_back),
@@ -109,7 +111,11 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
           children: [
             _buildNodeBar(state, theme),
             Expanded(
-              child: state.viewingTask ? _buildTaskView(state, theme) : _buildBody(state, theme),
+              child: state.viewingTask
+                  ? _buildTaskView(state, theme)
+                  : state.viewingSession
+                      ? _buildSessionView(state, theme)
+                      : _buildBody(state, theme),
             ),
             _buildConfirmCard(state, theme),
             _buildPermissionBar(state, theme),
@@ -279,10 +285,80 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      onTap: () => ref.read(harnessProvider.notifier).selectSession(session.id),
+      onTap: () => ref.read(harnessProvider.notifier).openSession(session.id),
     );
   }
 
+  /// 只读查看某个 dsh 会话的历史内容。
+  Widget _buildSessionView(HarnessState state, ThemeData theme) {
+    final session = state.selectedSession;
+    if (state.historyLoading) return const Center(child: CircularProgressIndicator());
+    final messages = state.history;
+    return ListView(
+      controller: _scroll,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      children: [
+        if (session != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              '会话:${session.displayName}',
+              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.outline),
+            ),
+          ),
+        if (messages.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            child: Text(
+              '这个会话还没有可读消息。\n可以直接在下方输入任务,让电脑上的 dsh 继续。',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        for (final message in messages) _historyBubble(message, theme),
+      ],
+    );
+  }
+
+  Widget _historyBubble(HarnessMessage message, ThemeData theme) {
+    final isUser = message.role == 'user';
+    final background = isUser
+        ? theme.colorScheme.primaryContainer.withValues(alpha: 0.45)
+        : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5);
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 640),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (message.text.trim().isNotEmpty)
+              SelectableText(message.text, style: theme.textTheme.bodyMedium),
+            if (message.tools.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final tool in message.tools)
+                      Chip(
+                        label: Text(tool, style: const TextStyle(fontSize: 10)),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
   Widget _buildTaskView(HarnessState state, ThemeData theme) {
     final selected = state.selectedSession;
     return ListView(

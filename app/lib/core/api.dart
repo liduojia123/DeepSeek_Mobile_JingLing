@@ -283,6 +283,17 @@ class ApiClient {
     return (json['task_id'] as String?) ?? '';
   }
 
+  /// 读取 dsh 会话的历史消息(只读)。
+  Future<List<HarnessMessage>> harnessHistory(String sessionId, {int limit = 200}) async {
+    final json = await _guard(() async => _decode(await _client.get(
+          _uri('/v1/harness/sessions/$sessionId/history', {'limit': '$limit'}),
+          headers: _headers(),
+        )));
+    return ((json['messages'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((item) => HarnessMessage.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
   Future<HarnessTaskSnapshot> harnessTask(String taskId) async {
     final json = await _guard(() async =>
         _decode(await _client.get(_uri('/v1/harness/tasks/$taskId'), headers: _headers())));

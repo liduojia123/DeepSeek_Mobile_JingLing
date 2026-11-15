@@ -175,3 +175,18 @@ class HarnessConfirmRequest {
         timeoutSec: (payload['timeout_sec'] as num?)?.toInt() ?? 15,
       );
 }
+
+/// dsh 会话里的一条历史消息(只读展示)。
+class HarnessMessage {
+  const HarnessMessage({required this.role, required this.text, this.tools = const []});
+
+  final String role; // user | assistant
+  final String text;
+  final List<String> tools;
+
+  factory HarnessMessage.fromJson(Map<String, dynamic> json) => HarnessMessage(
+        role: (json['role'] as String?) ?? 'assistant',
+        text: (json['text'] as String?) ?? '',
+        tools: ((json['tools'] as List?) ?? const []).whereType<String>().toList(growable: false),
+      );
+}

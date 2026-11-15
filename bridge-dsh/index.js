@@ -436,6 +436,8 @@ export function apply(ctx, config = {}) {
   function userMessage(text) {
     return {
       id: `msg-${randomUUID()}`,
+      // role 必须显式给出,否则 dsh 会话日志校验失败("message must have role user"),会话会被写坏
+      role: 'user',
       content: [{ type: 'text', text: String(text ?? '') }],
       source: { kind: 'jingling' },
     }
@@ -566,7 +568,45 @@ export function apply(ctx, config = {}) {
       case 'unsubscribe':
         dropSubscription(String(params.session_id), params.task_id ? String(params.task_id) : null)
         return { ok: true }
-      case 'permission.set': {
+      case 'session.history': {
+        const sessionId = String(params.session_id ?? '')
+        const limit = Math.max(1, Math.min(500, Number(params.limit ?? 200)))
+        const query = svc('sessionQuery')
+        if (typeof query?.readSurface !== 'function') throw new Error('sessionQuery.readSurface 不可用')
+        const snapshot = await query.readSurface(sessionId)
+        const blocksOf = (content) => (Array.isArray(content) ? content : [])
+        const textOf = (content) => blocksOf(content)
+          .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+          .map((block) => block.text)
+          .join('')
+        const toolsOf = (content) => blocksOf(content)
+          .filter((block) => block?.type === 'tool-call' && typeof block.name === 'string')
+          .map((block) => block.name)
+        const messages = []
+        for (const event of snapshot?.events ?? []) {
+          const data = event?.data ?? event ?? {}
+          if (event?.type === 'user/message') {
+            const text = textOf(data.content)
+            const source = data.source?.kind ?? ''
+            // 跳过 agent.inject 之类的系统注入,只保留真人输入(手机派的任务 source=jingling)
+            if (text.trim() === '') continue
+            if (source !== '' && source !== 'user' && source !== 'jingling') continue
+            messages.push({ role: 'user', text })
+          } else if (event?.type === 'assistant/message') {
+            const message = data.message ?? data
+            const text = textOf(message.content)
+            const tools = toolsOf(message.content)
+            if (text.trim() === '' && tools.length === 0) continue
+            messages.push({ role: 'assistant', text, tools })
+          }
+        }
+        return {
+          session_id: sessionId,
+          total: messages.length,
+          messages: messages.slice(-limit),
+          captured_through: snapshot?.capturedThroughSeq ?? null,
+        }
+      }      case 'permission.set': {
         const sessionId = String(params.session_id ?? '')
         const agents = svc('agents')
         const agent = agents?.get?.(sessionId)
