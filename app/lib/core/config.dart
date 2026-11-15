@@ -10,6 +10,7 @@ class SecureStore {
   static const String defaultServerUrl = 'http://127.0.0.1:3000';
   static const String _serverUrlKey = 'jingling.server_url';
   static const String _tokenKey = 'jingling.device_token';
+  static const String _autoSpeakKey = 'jingling.auto_speak';
 
   Future<String> readServerUrl() async {
     final value = await _storage.read(key: _serverUrlKey);
@@ -20,6 +21,17 @@ class SecureStore {
   Future<void> writeServerUrl(String url) async {
     final trimmed = url.trim();
     await _storage.write(key: _serverUrlKey, value: trimmed.isEmpty ? defaultServerUrl : trimmed);
+  }
+
+  /// 自动朗读回答(默认开)。
+  Future<bool> readAutoSpeak() async {
+    final value = await _storage.read(key: _autoSpeakKey);
+    if (value == null) return true;
+    return value != '0';
+  }
+
+  Future<void> writeAutoSpeak(bool enabled) async {
+    await _storage.write(key: _autoSpeakKey, value: enabled ? '1' : '0');
   }
 
   Future<String?> readToken() async {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -241,6 +242,29 @@ class ApiClient {
     return UsageSummary.fromJson(json);
   }
 
+  // ---------- 语音(M4) ----------
+
+  /// 上传 16kHz WAV → 识别文本。
+  Future<String> transcribe(Uint8List wav) async {
+    final request = http.MultipartRequest('POST', _uri('/v1/asr'))
+      ..headers.addAll(_headers(jsonContentType: false));
+    request.files.add(http.MultipartFile.fromBytes('file', wav, filename: 'speech.wav'));
+    final streamed = await _guard(() => _client.send(request));
+    final response = await http.Response.fromStream(streamed);
+    final json = _decode(response);
+    return (json['text'] as String?) ?? '';
+  }
+
+  /// 文本 → wav 音频字节(TTS)。
+  Future<Uint8List> synthesize(String text) async {
+    final response = await _guard(() => _client.post(
+          _uri('/v1/tts'),
+          headers: _headers(),
+          body: jsonEncode({'text': text}),
+        ));
+    if (response.statusCode != 200) throw _errorFrom(response.statusCode, response.body);
+    return response.bodyBytes;
+  }
   // ---------- dsh 远程开发桥(M3) ----------
 
   Future<List<HarnessNode>> harnessNodes() async {

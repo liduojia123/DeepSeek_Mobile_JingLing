@@ -285,7 +285,7 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | M0 后端骨架 | 服务部署、配对认证、DeepSeek 适配层、SSE 事件协议、会话+分支存储 | curl 走通流式对话与分支 | HANDOFF §M0 |
 | M1 客户端核心 | Flutter 四页、流式渲染、分支 UI、基础操作包 | 真机/Chrome 全流程 | HANDOFF §M1 |
 | M2 搜索与文件 ✅ | 搜索过程卡片、引用、文件上传解析 | 带 URL 能读网页;传 PDF 能答 | `docs/HANDOFF-M2.md`(完成 2026-11-15) || M3 dsh 远程开发桥 | spike→插件→服务器中继→电脑页 | 手机派任务+批准工具调用,任务完成 | §4.4 + 届时另出 |
-| M4 语音闭环 | ASR/TTS 管道、录音 UI、播放打断、长按朗读 | 全程语音完成一轮问答 | 届时另出 |
+| M4 语音闭环 | ASR/TTS 管道、录音 UI、播放打断、长按朗读 | 全程语音完成一轮问答 | `HANDOFF-M4.md`(服务端+客户端已完成,真机麦克风验收待做) |
 | M5 工具与用量 | memory + http_request + 预算熔断 + 用量看板 | "记住我用 XX,下次直接用"生效 | 届时另出 |
 | M6 打包发布 | APK、HTTPS(备案通过后)、证书锁定、备份脚本 | 手机安装即用 | 届时另出 |
 

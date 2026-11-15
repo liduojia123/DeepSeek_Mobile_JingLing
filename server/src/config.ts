@@ -38,6 +38,10 @@ export interface Config {
   fetchPriceCnyPerCall: number;
   /** 文档解析单价(元/页):OCR 1.5 元/千页 */
   ocrPriceCnyPerPage: number;
+  /** 语音识别单价(元/秒):0.39 元/小时 */
+  asrPriceCnyPerSecond: number;
+  /** 语音合成单价(元/计费字符):1.5 元/万字符(汉字算 2) */
+  ttsPriceCnyPerUnit: number;
 
   // ---- M3:dsh 远程开发桥 ----
   /** 桥接令牌(与设备令牌分离);为空则桥接端点关闭 */
@@ -69,6 +73,8 @@ const EnvSchema = z.object({
   SEARCH_PRICE_CNY_PER_CALL: z.string().optional(),
   FETCH_PRICE_CNY_PER_CALL: z.string().optional(),
   OCR_PRICE_CNY_PER_PAGE: z.string().optional(),
+  ASR_PRICE_CNY_PER_HOUR: z.string().optional(),
+  TTS_PRICE_CNY_PER_10K_CHARS: z.string().optional(),
   BRIDGE_TOKEN: z.string().optional(),
 });
 
@@ -131,6 +137,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     searchPriceCnyPerCall: num(e.SEARCH_PRICE_CNY_PER_CALL, 5 / 1000),
     fetchPriceCnyPerCall: num(e.FETCH_PRICE_CNY_PER_CALL, 5 / 1000),
     ocrPriceCnyPerPage: num(e.OCR_PRICE_CNY_PER_PAGE, 1.5 / 1000),
+    asrPriceCnyPerSecond: num(e.ASR_PRICE_CNY_PER_HOUR, 0.39) / 3600,
+    ttsPriceCnyPerUnit: num(e.TTS_PRICE_CNY_PER_10K_CHARS, 1.5) / 10_000,
     bridgeToken: e.BRIDGE_TOKEN?.trim() ?? '',
   };
   if (!config.mock && config.deepseekApiKey === '') {

@@ -1017,3 +1017,57 @@ test('M2:文件不存在时返回 400;输入命中审核时发 safety_block 且 
   assert.match(chat.payload, /event: safety_block/);
   assert.match(chat.payload, /"stop_reason":"refusal"/);
 });
+
+// ---------- M4 语音:ASR / TTS(MOCK) ----------
+
+test('M4 语音:MOCK ASR 接受 WAV 上传并返回文本,记录 asr 用量', async () => {
+  const { app, db } = makeHarness();
+  const headers = auth(await pair(app));
+
+  const boundary = '----jinglingtest';
+  const wav = Buffer.alloc(400);
+  wav.write('RIFF', 0);
+  const payload = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="speech.wav"\r\nContent-Type: audio/wav\r\n\r\n`,
+    ),
+    wav,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/v1/asr',
+    payload,
+    headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+  });
+  assert.equal(response.statusCode, 200);
+  const json = response.json() as { text: string; duration_ms: number };
+  assert.ok(json.text.length > 0, 'MOCK ASR 应返回文本');
+  assert.ok(json.duration_ms > 0, 'MOCK ASR 应返回时长');
+
+  const rows = db.prepare("SELECT COUNT(*) AS n FROM usage_log WHERE kind = 'asr'").get() as { n: number };
+  assert.equal(rows.n, 1, '应记录一条 asr 用量');
+});
+
+test('M4 语音:MOCK TTS 返回 wav 音频并记录 tts 用量(汉字按 2 计费字符)', async () => {
+  const { app, db } = makeHarness();
+  const headers = auth(await pair(app));
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/v1/tts',
+    payload: { text: '你好' },
+    headers,
+  });
+  assert.equal(response.statusCode, 200);
+  assert.match(String(response.headers['content-type']), /audio\/wav/);
+  assert.equal(response.rawPayload.subarray(0, 4).toString('ascii'), 'RIFF');
+
+  const row = db
+    .prepare("SELECT quantity, cost FROM usage_log WHERE kind = 'tts' ORDER BY ts DESC LIMIT 1")
+    .get() as { quantity: number; cost: number } | undefined;
+  assert.ok(row, '应记录 tts 用量');
+  assert.equal(row!.quantity, 4, '「你好」两个汉字 = 4 计费字符');
+  assert.ok(row!.cost > 0);
+});

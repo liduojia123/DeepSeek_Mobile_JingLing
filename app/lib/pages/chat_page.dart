@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../core/api.dart';
+import '../core/config.dart';
 import '../core/providers.dart';
+import '../core/voice.dart';
 import '../models/models.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_menu.dart';
@@ -20,6 +25,11 @@ class ChatPage extends ConsumerStatefulWidget {
 class _ChatPageState extends ConsumerState<ChatPage> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
+  final VoiceService _voice = VoiceService();
+  bool _autoSpeak = true;
+  bool _recording = false;
+  bool _transcribing = false;
+  bool _speaking = false;
 
   @override
   void initState() {
@@ -27,12 +37,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(chatProvider.notifier).open(widget.conversationId);
     });
+    SecureStore().readAutoSpeak().then((value) {
+      if (mounted) setState(() => _autoSpeak = value);
+    });
   }
 
   @override
   void dispose() {
     _input.dispose();
     _scroll.dispose();
+    _voice.dispose();
     super.dispose();
   }
 
@@ -52,12 +66,66 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final files = ref.read(chatProvider).files;
     if (text.isEmpty && files.isEmpty) return;
     _input.clear();
+    await _voice.stop();
     await ref.read(chatProvider.notifier).send(
           text,
           fileIds: files.map((file) => file.id).toList(growable: false),
         );
   }
 
+  /// 朗读一段文字(先停掉上一段,保证可打断)。
+  Future<void> _speak(String text) async {
+    final api = ref.read(apiProvider);
+    if (api == null || text.trim().isEmpty) return;
+    setState(() => _speaking = true);
+    try {
+      await _voice.stop();
+      final bytes = await api.synthesize(text);
+      await _voice.play(bytes);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _speaking = false);
+    }
+  }
+
+  Future<void> _startRecording() async {
+    if (ref.read(chatProvider).generating) return;
+    await _voice.stop();
+    final started = await _voice.startRecording();
+    if (!mounted) return;
+    setState(() => _recording = started);
+    if (!started) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('麦克风不可用或未授权,请在系统设置里允许鲸灵录音')),
+      );
+    }
+  }
+
+  Future<void> _stopRecordingAndTranscribe() async {
+    if (!_recording) return;
+    setState(() => _recording = false);
+    final bytes = await _voice.stopRecording();
+    if (bytes == null) return;
+    setState(() => _transcribing = true);
+    try {
+      final text = await ref.read(apiProvider)!.transcribe(bytes);
+      if (!mounted) return;
+      if (text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('没有识别到内容,再说一次？')));
+        return;
+      }
+      _input.text = text.trim();
+      _input.selection = TextSelection.collapsed(offset: _input.text.length);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已转成文字,确认后点发送')));
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _transcribing = false);
+    }
+  }
   Future<void> _pickFile() async {
     try {
       final file = await FilePicker.pickFile(
@@ -127,6 +195,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         if (result != null && result.isNotEmpty) {
           await ref.read(chatProvider.notifier).editResend(node, result);
         }
+      case MessageMenuAction.speak:
+        await _speak(node.text);
       case MessageMenuAction.regenerate:
         await ref.read(chatProvider.notifier).regenerate(node);
       case MessageMenuAction.delete:
@@ -163,13 +233,38 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ..showSnackBar(SnackBar(content: Text(message)));
         ref.read(chatProvider.notifier).clearBanner();
       }
+      // 回答完成 → 自动朗读最终回答(可打断)
+      if (previous != null && previous.generating && !next.generating && next.error == null && _autoSpeak) {
+        final answers = (next.detail?.pathNodes ?? const <MessageNode>[])
+            .where((node) => node.isAssistant)
+            .toList(growable: false);
+        if (answers.isNotEmpty) unawaited(_speak(answers.last.text));
+      }
     });
 
     final title = chat.title ?? chat.detail?.conversation.displayTitle ?? '对话';
     _scrollToBottom();
 
     return Scaffold(
-      appBar: AppBar(title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        actions: [
+          if (_speaking)
+            IconButton(
+              tooltip: '停止朗读',
+              onPressed: () => _voice.stop(),
+              icon: const Icon(Icons.stop_circle_outlined),
+            ),
+          IconButton(
+            tooltip: _autoSpeak ? '自动朗读:开' : '自动朗读:关',
+            onPressed: () async {
+              setState(() => _autoSpeak = !_autoSpeak);
+              await SecureStore().writeAutoSpeak(_autoSpeak);
+            },
+            icon: Icon(_autoSpeak ? Icons.volume_up : Icons.volume_off),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
@@ -302,9 +397,40 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ],
             ),
             const SizedBox(height: 6),
+            if (_recording || _transcribing)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      _recording ? Icons.mic : Icons.graphic_eq,
+                      size: 16,
+                      color: _recording ? theme.colorScheme.error : theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _recording ? '正在录音…松开结束' : '正在识别语音…',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                // 按住说话:松开 → 上传 ASR → 文字进输入框供确认
+                GestureDetector(
+                  onLongPressStart: chat.generating || _transcribing ? null : (_) => _startRecording(),
+                  onLongPressEnd: chat.generating || _transcribing ? null : (_) => _stopRecordingAndTranscribe(),
+                  child: IconButton(
+                    tooltip: '按住说话',
+                    onPressed: chat.generating ? null : () {},
+                    icon: Icon(
+                      _recording ? Icons.mic : Icons.mic_none,
+                      color: _recording ? theme.colorScheme.error : null,
+                    ),
+                  ),
+                ),
                 IconButton(
                   tooltip: '添加文件',
                   onPressed: chat.generating ? null : _pickFile,

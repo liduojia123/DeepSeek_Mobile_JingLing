@@ -8,6 +8,7 @@ import { registerConversationRoutes, GenerationRegistry } from './routes/convers
 import { registerFileRoutes } from './routes/files.js';
 import { HarnessHub, registerHarnessBridge, registerHarnessRoutes } from './routes/harness.js';
 import { registerUsageRoutes } from './routes/usage.js';
+import { registerVoiceRoutes } from './routes/voice.js';
 
 export interface AppContext {
   config: Config;
@@ -80,6 +81,7 @@ export function buildApp(
     registerConversationRoutes(secured, ctx, registry);
     registerUsageRoutes(secured, ctx);
     await registerFileRoutes(secured, ctx);
+    await registerVoiceRoutes(secured, { config, db, mock: config.mock });
     registerHarnessRoutes(secured, harnessHub, config);
   });
 
