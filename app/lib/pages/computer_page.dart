@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/harness_providers.dart';
+import '../models/harness.dart';
 import '../widgets/thinking_block.dart';
 
 /// 电脑页:查看电脑上的 dsh 工作区/会话,远程派任务、看实时输出、逐条确认工具调用。
@@ -138,6 +139,11 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
     }
 
     final selectedId = state.selectedSessionId;
+    final groupedIds = <String>{
+      for (final workspace in snapshot.workspaces) ...workspace.sessionIds,
+    };
+    final ungrouped =
+        snapshot.sessions.where((session) => !groupedIds.contains(session.id)).toList(growable: false);
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
@@ -150,22 +156,37 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
             children: [
               for (final session in snapshot.sessions)
                 if (workspace.sessionIds.contains(session.id))
-                  ListTile(
-                    dense: true,
-                    leading: Icon(
-                      session.id == selectedId ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                      size: 18,
-                    ),
-                    title: Text(session.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(
-                      '${session.id.substring(0, session.id.length.clamp(0, 20))}…'
-                      '${session.live ? ' · 运行中' : ''}',
-                    ),
-                    onTap: () => ref.read(harnessProvider.notifier).selectSession(session.id),
-                  ),
+                  _sessionTile(session, session.id == selectedId),
+            ],
+          ),
+        if (ungrouped.isNotEmpty)
+          ExpansionTile(
+            leading: const Icon(Icons.inbox_outlined),
+            title: const Text('未加入工作区的会话'),
+            subtitle: Text('${ungrouped.length} 个(常见于刚新建的会话)'),
+            initiallyExpanded: ungrouped.any((session) => session.id == selectedId),
+            children: [
+              for (final session in ungrouped)
+                _sessionTile(session, session.id == selectedId),
             ],
           ),
       ],
+    );
+  }
+
+  Widget _sessionTile(HarnessSession session, bool selected) {
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        size: 18,
+      ),
+      title: Text(session.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        '${session.id.substring(0, session.id.length.clamp(0, 20))}…'
+        '${session.live ? ' · 运行中' : ''}',
+      ),
+      onTap: () => ref.read(harnessProvider.notifier).selectSession(session.id),
     );
   }
 
