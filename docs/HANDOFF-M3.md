@@ -128,3 +128,12 @@ event: harness_done     {task_id, stop_reason}
 - 远程控制 dsh 的 GUI 操作(只做会话/任务级别);
 - 多节点负载均衡(先支持一个节点,多节点留字段);
 - 通过桥接下载电脑上的文件(M6 后另议)。
+
+## 0.2 未完成项(2026-11-15 实测记录)
+
+**审批卡片端到端触发尚未复现**。已排除的原因:
+- answerer 已按 `approval/request` 契约注册(代码在 `bridge-dsh/index.js`),但需要「会触发审批的工具调用」才会被调用;
+- 本机历史会话里,有些会话在 dsh 侧恢复校验失败(`session event at seq N lacks an identified message`),不能用来测试;
+- 新建会话(`agents.create`)的工具集取决于 `meta.agentPreset`,实测传入 `standard` 后新会话仍只拿到全局工具(ego-browser 等),没有 fs/bash 沙箱工具,于是模型改用 ego 的 Node heredoc 直接写文件——绕过了审批通道。
+
+下一步:**先验证 agentPreset 是否真的落到新会话 header**(`session.header.agentPreset`),必要时改用 `agents.create({ meta:{agentPreset} })` 之外的方式(例如从 live agent 继承 preset、或用 `setup` 回调安装工具),再跑一次「越界写文件」触发 `confirm_request`。

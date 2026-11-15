@@ -12,6 +12,8 @@ interface NodeState {
   name: string;
   platform: string;
   capabilities: string[];
+  /** 插件实例启动时间,用于在同机多实例时选最新 */
+  since: number;
   ws: WebSocket;
   lastSeen: string;
 }
@@ -101,6 +103,8 @@ export class HarnessHub {
         // 优先选声明了 v2 能力的节点(支持 workspaces/sessions/tasks/approval 全量 RPC)
         const rank = (node: NodeState) => (node.capabilities.includes('v2') ? 1 : 0);
         if (rank(a) !== rank(b)) return rank(b) - rank(a);
+        // 同能力时选「启动最晚」的实例,热重载残留的旧实例不会抢到任务
+        if (a.since !== b.since) return b.since - a.since;
         return a.lastSeen < b.lastSeen ? 1 : -1;
       });
     const latest = online[0];
@@ -122,7 +126,14 @@ export class HarnessHub {
   }
 
   /** 手机侧:创建任务并让插件开始 followup */
-  async createTask(input: { sessionId: string; prompt: string; nodeId?: string; cwd?: string; requireApproval?: boolean }) {
+  async createTask(input: {
+    sessionId: string;
+    prompt: string;
+    nodeId?: string;
+    cwd?: string;
+    requireApproval?: boolean;
+    agentPreset?: string;
+  }) {
     const node = this.resolveNode(input.nodeId);
     const taskId = randomUUID();
     const task: TaskState = {
@@ -150,6 +161,7 @@ export class HarnessHub {
         prompt: input.prompt,
         ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
         ...(input.requireApproval === true ? { require_approval: true } : {}),
+        ...(input.agentPreset ? { agent_preset: input.agentPreset } : {}),
       });
     } catch (error) {
       this.setStatus(task, 'error');
@@ -249,6 +261,12 @@ export class HarnessHub {
         const node = this.nodes.get(nodeId);
         if (node) node.lastSeen = nowIso();
       }
+      if (message.type !== 'ping') {
+        log?.info(
+          `桥接上行 ${String(message.type)}${message.type === 'rpc' ? ` ${String(message.method)}` : ''}` +
+            `${message.type === 'confirm_request' ? ` tool=${String(message.tool)} approval=${String(message.approval_id)}` : ''}`,
+        );
+      }
 
       if (message.type === 'hello') {
         const info = (message.node ?? {}) as Record<string, unknown>;
@@ -262,17 +280,11 @@ export class HarnessHub {
           if (existing.name !== name || existing.platform !== platform) continue;
           const existingIsV2 = existing.capabilities.includes('v2');
           if (existingIsV2 && !isV2) {
-            // 旧版本重连:直接拒绝,保持 v2 节点
-            log?.info(`拒绝旧版本桥接节点: ${name}(${platform})`);
-            ws.close(1000, 'superseded by v2 node');
+            // 旧版本重连:不注册、也不关闭(关闭会让旧实例陷入重连风暴),让它静默挂着
+            log?.info(`忽略旧版本桥接节点: ${name}(${platform})`);
             return;
           }
-          try {
-            existing.ws.send(JSON.stringify({ type: 'stand_down' }));
-            existing.ws.close(1000, 'replaced by newer connection');
-          } catch {
-            // ignore
-          }
+          // 新连接接管路由;旧 socket 保留但不关闭,避免旧实例反复重连
           this.nodes.delete(existingId);
         }
         const node: NodeState = {
@@ -280,6 +292,7 @@ export class HarnessHub {
           name,
           platform,
           capabilities,
+          since: Number(info.startedAt) || Date.now(),
           ws,
           lastSeen: nowIso(),
         };
@@ -428,6 +441,7 @@ export function registerHarnessRoutes(
       nodeId: typeof body.node_id === 'string' ? body.node_id : undefined,
       cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
       requireApproval: body.require_approval === true,
+      agentPreset: typeof body.agent_preset === 'string' ? body.agent_preset : undefined,
     });
   });
 

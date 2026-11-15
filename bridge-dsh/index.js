@@ -84,6 +84,7 @@ export function apply(ctx, config = {}) {
   let heartbeat = null
   let nodeId = null
   let selfCleanup = null
+  const startedAt = Date.now()
 
   /** task_id -> { sessionId, agent } 手机正在跟踪的任务 */
   const tasks = new Map()
@@ -275,27 +276,68 @@ export function apply(ctx, config = {}) {
     return handle?.agent ?? handle
   }
 
-  async function startTask({ task_id: taskId, session_id: sessionId, prompt, cwd }) {
+  /** 模型路由:显式参数 → 配置 → 当前 live agent → llm 服务第一个 deepseek 模型 */
+  async function resolveAgentOptions(agents, params) {
+    if (params.provider && params.model) return { provider: String(params.provider), model: String(params.model) }
+    const live = agents.list?.() ?? []
+    const sample = live.find((a) => a?.options?.provider && a?.options?.model)?.options
+    if (sample) return { provider: sample.provider, model: sample.model }
+    if (cfg.agentProvider && cfg.agentModel) return { provider: cfg.agentProvider, model: cfg.agentModel }
+    try {
+      const llm = svc('llm')
+      const providers = llm?.listProviders?.() ?? []
+      const deepseek = providers.find((p) => String(p?.id ?? '').includes('deepseek')) ?? providers[0]
+      if (deepseek) {
+        const models = llm?.listModels?.(deepseek.id) ?? []
+        const model = models[0]
+        const modelId = typeof model === 'string' ? model : model?.id
+        if (modelId) return { provider: String(deepseek.id), model: String(modelId) }
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error('无法确定模型路由:请在插件配置里填 agentProvider/agentModel')
+  }
+
+  /** agentPreset 决定工具集;优先显式参数 / 配置,其次从历史会话 header 里取最常见的值 */
+  async function resolveAgentPreset(params) {
+    if (params.agent_preset) return String(params.agent_preset)
+    if (cfg.agentPreset) return String(cfg.agentPreset)
+    try {
+      const query = svc('sessionQuery')
+      let rows = query?.listSessions?.()
+      if (rows && typeof rows.then === 'function') rows = await rows
+      const counts = new Map()
+      for (const row of rows ?? []) {
+        const preset = row?.header?.agentPreset
+        if (preset) counts.set(preset, (counts.get(preset) ?? 0) + 1)
+      }
+      const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
+      if (best) return best[0]
+    } catch {
+      // ignore
+    }
+    return undefined
+  }
+  async function startTask(params = {}) {
+    const taskId = String(params.task_id ?? '')
+    let sessionId = String(params.session_id ?? '')
+    const prompt = params.prompt
+    const cwd = params.cwd
     // session_id 传 '__new__' + cwd = 新建一个会话(默认审批策略 ask,便于手机测试确认卡片)
     let agent
     if (sessionId === '__new__') {
       const agents = svc('agents')
       if (typeof agents?.create !== 'function') throw new Error('agents.create 不可用')
-      // 新会话必须带模型路由:优先继承当前任一 live agent 的 provider/model
-      const live = agents.list?.() ?? []
-      const sample = live.find((a) => a?.options?.provider && a?.options?.model)?.options
-      const agentOptions = sample
-        ? { provider: sample.provider, model: sample.model }
-        : cfg.agentProvider && cfg.agentModel
-          ? { provider: cfg.agentProvider, model: cfg.agentModel }
-          : undefined
-      if (!agentOptions) {
-        throw new Error('无法确定模型路由:请先在本机打开一个会话,或在插件配置里填 agentProvider/agentModel')
-      }
+      const agentOptions = await resolveAgentOptions(agents, params)
+      const agentPreset = await resolveAgentPreset(params)
       const created = await agents.create({
         sessionId: `session-${randomUUID()}`,
         agentOptions,
-        meta: cwd ? { cwd: String(cwd) } : {},
+        meta: {
+          ...(cwd ? { cwd: String(cwd) } : {}),
+          ...(agentPreset ? { agentPreset } : {}),
+        },
       })
       agent = created?.agent ?? created
       sessionId = String(agent?.session?.id ?? '')
@@ -448,6 +490,7 @@ export function apply(ctx, config = {}) {
           name: cfg.nodeName || 'dsh',
           platform: process.platform,
           capabilities: ['workspaces', 'sessions', 'tasks', 'approval', 'events', 'v2'],
+          startedAt: startedAt,
           versions: { electron: process.versions.electron, node: process.versions.node },
         },
       })
