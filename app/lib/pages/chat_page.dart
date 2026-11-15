@@ -90,7 +90,69 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  /// 拍照提问:拍一张 → 上传解析 → 没输入文字就直接作为「图片问题」发送。
+  /// 图片入口:拍照 或 从相册选择(可多选)。
+  Future<void> _pickPhoto() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('拍照'),
+              subtitle: const Text('拍一张,附到当前消息'),
+              onTap: () => Navigator.pop(sheetContext, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从相册选择'),
+              subtitle: const Text('最多 6 张,可多选'),
+              onTap: () => Navigator.pop(sheetContext, 'gallery'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'camera') {
+      await _takePhoto();
+    } else {
+      await _pickFromGallery();
+    }
+  }
+
+  /// 从相册多选图片 → 逐张上传解析 → 附加到当前消息。
+  Future<void> _pickFromGallery() async {
+    try {
+      final picked = await ImagePicker().pickMultiImage(
+        imageQuality: 85,
+        maxWidth: 2200,
+        limit: 6,
+      );
+      if (picked.isEmpty) return;
+      var added = 0;
+      for (final file in picked) {
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) continue;
+        await ref.read(chatProvider.notifier).attachFile(name: file.name, bytes: bytes);
+        added += 1;
+      }
+      if (!mounted || added == 0) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已添加 $added 张图片,可以补充问题后点发送')),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('选择图片失败:$error')));
+    }
+  }
+
+  /// 拍照提问:拍一张 → 上传解析 → 附加到当前消息(不自动发送)。
   Future<void> _takePhoto() async {
     try {
       final picked = await ImagePicker().pickImage(
@@ -485,9 +547,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ),
                 ),
                 IconButton(
-                  tooltip: '拍照提问',
-                  onPressed: chat.generating ? null : _takePhoto,
-                  icon: const Icon(Icons.photo_camera_outlined),
+                  tooltip: '图片(拍照/相册)',
+                  onPressed: chat.generating ? null : _pickPhoto,
+                  icon: const Icon(Icons.add_photo_alternate_outlined),
                 ),
                 IconButton(
                   tooltip: '添加文件',

@@ -1,7 +1,7 @@
 name: jingling
 description: "鲸灵 JingLing —— 手机瘦客户端(会话、分支、流式渲染)"
 publish_to: 'none'
-version: 1.0.6+7
+version: 1.0.7+8
 
 environment:
   sdk: ^3.14.0
