@@ -39,8 +39,8 @@ class ApiClient {
     return query == null ? uri : uri.replace(queryParameters: query);
   }
 
-  Map<String, String> _headers({bool withAuth = true}) => {
-        'Content-Type': 'application/json',
+  Map<String, String> _headers({bool withAuth = true, bool jsonContentType = true}) => {
+        if (jsonContentType) 'Content-Type': 'application/json',
         if (withAuth && token != null && token!.isNotEmpty) 'Authorization': 'Bearer $token',
       };
 
@@ -318,8 +318,10 @@ class ApiClient {
     final client = http.Client();
     var seq = 0;
     try {
-      final request = http.Request('POST', _uri('/v1/harness/tasks/$taskId/events'))
-        ..headers.addAll(_headers());
+      // SSE 是 GET 且无 body:不能带 JSON content-type,否则 Fastify 会以
+      // "Body cannot be empty when content-type is set to 'application/json'" 拒绝
+      final request = http.Request('GET', _uri('/v1/harness/tasks/$taskId/events'))
+        ..headers.addAll(_headers(jsonContentType: false));
       final response = await client.send(request);
       if (response.statusCode != 200) {
         final text = await response.stream.bytesToString();
