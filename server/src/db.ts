@@ -111,6 +111,21 @@ CREATE TABLE IF NOT EXISTS harness_event (
   ts           TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_harness_event_task ON harness_event(task_id);
+
+-- M3.5:会话级流(手机与电脑共用同一个会话)。seq 是服务器本地游标,手机按它续传;
+-- dsh_seq 是 dsh 会话事件序号,用于插件重连补发时去重(瞬时事件为 NULL)。
+CREATE TABLE IF NOT EXISTS harness_stream_event (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id   TEXT NOT NULL,
+  seq          INTEGER NOT NULL,
+  dsh_seq      INTEGER,
+  kind         TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  ts           TEXT NOT NULL,
+  UNIQUE (session_id, seq)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stream_session_dsh
+  ON harness_stream_event(session_id, dsh_seq) WHERE dsh_seq IS NOT NULL;
 `;
 
 /** 给既有库补列(SQLite 没有 ADD COLUMN IF NOT EXISTS)。 */

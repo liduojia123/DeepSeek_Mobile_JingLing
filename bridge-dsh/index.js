@@ -6,10 +6,13 @@
  *   2. 订阅任务实时输出          → agent/assistant-stream
  *   3. 派任务/追问/停止          → agent.followup / steer / cancel
  *   4. 逐条确认工具调用          → approval/request answerer(超时按拒绝,fail-closed)
+ *   5. 会话级桥接(M3.5)        → 手机与电脑共用同一个会话:session/event 全量(压缩)上行、
+ *      插话(steer)/追加(followup)、状态、新会话
  *
  * 设计约束:
  * - 电脑不开入站端口;只出不进。
- * - 只拦截「手机正在管理的会话」的审批请求,本机正常使用不受影响;未订阅的请求委托给 next()。
+ * - 只转发「手机正在看着的会话」(watchedSessions)与「手机派的任务」,本机正常使用不额外上行。
+ * - 只拦截「手机正在管理的会话」的审批请求;未订阅的请求委托给 next()。
  * - 断线指数退避重连;断开期间审批一律委托(没有 answerer 时 dsh 自身会 fail-closed)。
  */
 
@@ -91,6 +94,10 @@ export function apply(ctx, config = {}) {
   const tasks = new Map()
   /** session_id -> Set<task_id>:只有被手机订阅的会话才转发事件与拦截审批 */
   const sessionSubs = new Map()
+  /** 手机正在"看着"的会话(M3.5 会话级桥接):与 task 订阅并存 */
+  const watchedSessions = new Set()
+  /** session_id -> { status?, permission?, inbox? } 最近一次已知状态 */
+  const sessionStates = new Map()
   /** approval_id -> resolve('allow'|'reject'|'cancelled'|'timeout') */
   const pendingApprovals = new Map()
 
@@ -156,6 +163,208 @@ export function apply(ctx, config = {}) {
     if (!sessionId || !taskIdOfSession(sessionId)) return
     sendEvent(sessionId, { type: 'error', message: error instanceof Error ? error.message : String(error) })
   })
+
+  // ---------- 上行:会话级事件(M3.5,手机与电脑共用同一个会话) ----------
+
+  const trimText = (value, max) => {
+    const text = typeof value === 'string' ? value : ''
+    return text.length > max ? `${text.slice(0, max)}…` : text
+  }
+  const blocksOf = (content) => (Array.isArray(content) ? content : [])
+  const textOf = (content) =>
+    blocksOf(content)
+      .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('')
+  const reasoningOf = (content) =>
+    blocksOf(content)
+      .filter((block) => block?.type === 'reasoning' && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('')
+  const toolsOf = (content) =>
+    blocksOf(content)
+      .filter((block) => block?.type === 'tool-call' && typeof block.name === 'string')
+      .map((block) => ({
+        call_id: block.id ?? null,
+        name: block.name,
+        arguments: trimText(String(block.arguments ?? ''), 4000),
+      }))
+
+  /**
+   * 把 dsh 的持久会话事件压成手机需要的形态:
+   * 只保留时间线需要的类型,大字段截断;系统/开发者/请求头/压缩事件一律丢弃。
+   */
+  function compactSessionEvent(type, data) {
+    const payloadOf = data ?? {}
+    switch (type) {
+      case 'user/message': {
+        const source = payloadOf?.source?.kind ?? ''
+        // agent 注入的上下文(文件变更提示、技能内容等)不进手机时间线
+        if (source !== '' && source !== 'user' && source !== 'jingling') return null
+        const text = textOf(payloadOf?.content)
+        if (text.trim() === '') return null
+        return { kind: 'user_message', payload: { text, source: source || 'user', message_id: payloadOf?.id ?? null } }
+      }
+      case 'assistant/message': {
+        const message = payloadOf?.message ?? payloadOf
+        const text = textOf(message?.content)
+        const reasoning = reasoningOf(message?.content)
+        const tools = toolsOf(message?.content)
+        if (text.trim() === '' && reasoning.trim() === '' && tools.length === 0) return null
+        return {
+          kind: 'assistant_message',
+          payload: {
+            text,
+            reasoning: trimText(reasoning, 8000),
+            tools,
+            interrupted: payloadOf?.interrupted === true,
+            turn: Number.isFinite(payloadOf?.turn) ? payloadOf.turn : null,
+            step: Number.isFinite(payloadOf?.step) ? payloadOf.step : null,
+            usage: payloadOf?.usage ?? null,
+          },
+        }
+      }
+      case 'tool/call':
+        return {
+          kind: 'tool_call',
+          payload: {
+            call_id: payloadOf?.callId ?? null,
+            name: payloadOf?.name ?? 'tool',
+            arguments: trimText(String(payloadOf?.arguments ?? ''), 4000),
+          },
+        }
+      case 'tool/result': {
+        const message = payloadOf?.message ?? {}
+        return {
+          kind: 'tool_result',
+          payload: {
+            call_id: message?.toolCallId ?? payloadOf?.callId ?? null,
+            is_error: message?.isError === true || payloadOf?.error !== undefined,
+            text: trimText(textOf(message?.content), 4000),
+            reason: payloadOf?.error?.reason ?? null,
+          },
+        }
+      }
+      case 'turn/start':
+        return { kind: 'turn_start', payload: { turn: Number.isFinite(payloadOf?.turn) ? payloadOf.turn : null } }
+      case 'turn/end': {
+        const reason = payloadOf?.reason
+        return {
+          kind: 'turn_end',
+          payload: {
+            turn: Number.isFinite(payloadOf?.turn) ? payloadOf.turn : null,
+            reason: typeof reason === 'string' ? reason : (reason?.kind ?? null),
+          },
+        }
+      }
+      default:
+        return null
+    }
+  }
+
+  /**
+   * 持久会话事件:只在手机"看着"这个会话时上行。
+   * { global: true } 绕过 cordis 的上下文过滤——本地用户在电脑上开的会话不在插件作用域里,
+   * 不加这个选项就只能收到插件自己创建的 agent 的事件(那样"同一份对话"就不成立)。
+   */
+  const disposeSessionEvent = ctx.on(
+    'session/event',
+    (session, event) => {
+      const sessionId = session?.id
+      if (!sessionId || !watchedSessions.has(sessionId)) return
+      const compacted = compactSessionEvent(event?.type, event?.data)
+      if (!compacted) return
+      const known = sessionStates.get(sessionId) ?? {}
+      if (compacted.kind === 'turn_start') known.status = 'running'
+      if (compacted.kind === 'turn_end') known.status = 'idle'
+      sessionStates.set(sessionId, known)
+      send({
+        type: 'session_event',
+        session_id: sessionId,
+        dsh_seq: Number(event?.seq ?? 0),
+        kind: compacted.kind,
+        payload: compacted.payload,
+      })
+    },
+    { global: true },
+  )
+
+  /** 实时增量(不落库):只给手机做"正在打字"的呈现 */
+  const disposeSessionLive = ctx.on(
+    'agent/assistant-stream',
+    ({ agent, frame }) => {
+      const sessionId = agent?.session?.id
+      if (!sessionId || !watchedSessions.has(sessionId)) return
+      if (frame.type !== 'chunk') return
+      const chunk = frame.chunk
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text !== '') {
+        send({ type: 'live', session_id: sessionId, kind: 'text', text: chunk.text })
+      } else if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text !== '') {
+        send({ type: 'live', session_id: sessionId, kind: 'reasoning', text: chunk.text })
+      }
+    },
+    { global: true },
+  )
+
+
+  const disposeSessionStatus = ctx.on(
+    'agent/status',
+    ({ agent, status }) => {
+      const sessionId = agent?.session?.id
+      if (!sessionId || !watchedSessions.has(sessionId)) return
+      const known = sessionStates.get(sessionId) ?? {}
+      known.status = status
+      sessionStates.set(sessionId, known)
+      send({ type: 'live', session_id: sessionId, kind: 'status', status })
+    },
+    { global: true },
+  )
+
+
+  const inboxActions = ['inserted', 'claimed', 'discarded']
+  const disposeInbox = inboxActions.map((action) =>
+    ctx.on(
+      `agent/inbox/${action}`,
+      ({ agent }) => {
+        const sessionId = agent?.session?.id
+        if (!sessionId || !watchedSessions.has(sessionId)) return
+        send({ type: 'live', session_id: sessionId, kind: 'inbox', action })
+      },
+      { global: true },
+    ),
+  )
+
+  /** 会话当前状态:状态 / 权限 / 模型 / 待处理输入 */
+  function sessionStateOf(sessionId) {
+    const agents = svc('agents')
+    const agent = agents?.get?.(sessionId)
+    const known = sessionStates.get(sessionId) ?? {}
+    let permission = known.permission ?? null
+    try {
+      const current = svc('permissionPresets')?.current?.(agent?.session)
+      const value = current?.name ?? current?.preset ?? (typeof current === 'string' ? current : null)
+      if (value) permission = String(value)
+    } catch {
+      // ignore
+    }
+    let inbox = { next_turn: 0, next_step: 0 }
+    try {
+      inbox = {
+        next_turn: agent?.inbox?.nextTurn?.length ?? 0,
+        next_step: agent?.inbox?.nextStep?.length ?? 0,
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      session_id: sessionId,
+      status: agent?.status ?? known.status ?? 'idle',
+      permission,
+      model: agent?.options?.provider && agent?.options?.model ? `${agent.options.provider}/${agent.options.model}` : null,
+      inbox,
+      live: Boolean(agent),
+    }
+  }
 
   // ---------- 工具调用确认:pre-execute 拦截 → 手机批准/拒绝 ----------
 
@@ -562,6 +771,130 @@ export function apply(ctx, config = {}) {
     if (ids.size === 0) sessionSubs.delete(sessionId)
   }
 
+  // ---------- 会话级 RPC(M3.5) ----------
+
+  async function sessionEvents(params = {}) {
+    const sessionId = String(params.session_id ?? '')
+    if (!sessionId) throw new Error('需要 session_id')
+    const limit = Math.max(1, Math.min(2000, Number(params.limit ?? 300)))
+    const query = svc('sessionQuery')
+    if (typeof query?.readSurface !== 'function') throw new Error('sessionQuery.readSurface 不可用')
+    const snapshot = await query.readSurface(sessionId)
+    const events = []
+    for (const event of snapshot?.events ?? []) {
+      const compacted = compactSessionEvent(event?.type, event?.data)
+      if (!compacted) continue
+      events.push({ seq: Number(event?.seq ?? 0), type: compacted.kind, data: compacted.payload })
+    }
+    return {
+      session_id: sessionId,
+      total: events.length,
+      events: events.slice(-limit),
+      captured_through_seq: snapshot?.capturedThroughSeq ?? null,
+    }
+  }
+
+  /**
+   * 手机输入进会话:
+   *  - mode=auto:电脑上正在跑(agent.status=running)就插话(steer),否则追加一轮(followup)
+   *  - 会话不在运行:先 resume,失败再新建(沿用 M3 的 create 逻辑)
+   */
+  async function sendInput(params = {}) {
+    const sessionId = String(params.session_id ?? '')
+    const text = String(params.text ?? '').trim()
+    const requested = String(params.mode ?? 'auto')
+    if (!sessionId) throw new Error('需要 session_id')
+    if (text === '') throw new Error('内容不能为空')
+    const agents = svc('agents')
+    let agent = agents?.get?.(sessionId)
+    if (!agent) {
+      agent = await ensureAgent(sessionId).catch(() => null)
+    }
+    if (!agent) throw new Error('会话不在运行,且无法恢复')
+    const status = agent.status ?? 'idle'
+    const mode = requested === 'steer' || requested === 'followup' ? requested : status === 'running' ? 'steer' : 'followup'
+    const message = userMessage(text)
+    if (mode === 'steer') agent.steer(message)
+    else agent.followup(message)
+    const known = sessionStates.get(sessionId) ?? {}
+    known.status = 'running'
+    sessionStates.set(sessionId, known)
+    return { session_id: sessionId, mode, status }
+  }
+
+  /** 新会话:cwd + preset(决定工具集)+ 权限预设 */
+  async function createSession(params = {}) {
+    const agents = svc('agents')
+    if (typeof agents?.create !== 'function') throw new Error('agents.create 不可用')
+    const agentOptions = await resolveAgentOptions(agents, params)
+    const agentPreset = await resolveAgentPreset(params)
+    const cwd = params.cwd ? String(params.cwd) : undefined
+    const created = await agents.create({
+      sessionId: `session-${randomUUID()}`,
+      agentOptions,
+      meta: {
+        ...(cwd ? { cwd } : {}),
+        ...(agentPreset ? { agentPreset } : {}),
+      },
+    })
+    const agent = created?.agent ?? created
+    const sessionId = String(agent?.session?.id ?? '')
+    if (!sessionId) throw new Error('创建会话失败:没有拿到 session id')
+    const presets = svc('agentPresets')
+    if (presets?.mount && agent?.ctx) {
+      try {
+        await presets.mount(agent.ctx, agentPreset || 'standard')
+      } catch {
+        // preset 挂载失败不影响会话本身,工具集会退化为全局工具
+      }
+    }
+    let permission = null
+    if (params.permission) {
+      try {
+        svc('permissionPresets')?.set?.(agent.session, String(params.permission))
+        permission = String(params.permission)
+      } catch {
+        // ignore
+      }
+    }
+    sessionStates.set(sessionId, { status: agent?.status ?? 'idle', ...(permission ? { permission } : {}) })
+    return {
+      session_id: sessionId,
+      agent_preset: agent?.session?.header?.agentPreset ?? null,
+      permission,
+    }
+  }
+
+  async function setSessionPermission(params = {}) {
+    const sessionId = String(params.session_id ?? '')
+    const mode = String(params.mode ?? '')
+    if (!sessionId) throw new Error('需要 session_id')
+    if (mode === '') throw new Error('需要 mode')
+    const agent = svc('agents')?.get?.(sessionId)
+    if (!agent) throw new Error('会话不在运行,无法切换权限')
+    svc('permissionPresets')?.set?.(agent.session, mode)
+    const known = sessionStates.get(sessionId) ?? {}
+    known.permission = mode
+    sessionStates.set(sessionId, known)
+    return { session_id: sessionId, mode }
+  }
+
+  async function stopSession(params = {}) {
+    const sessionId = String(params.session_id ?? '')
+    if (!sessionId) throw new Error('需要 session_id')
+    const agent = svc('agents')?.get?.(sessionId)
+    if (agent) agent.cancel({ kind: 'user' })
+    return { ok: true }
+  }
+
+  function sessionWatch(params = {}, watching) {
+    const sessionId = String(params.session_id ?? '')
+    if (!sessionId) throw new Error('需要 session_id')
+    if (watching) watchedSessions.add(sessionId)
+    else watchedSessions.delete(sessionId)
+    return { ok: true, watched: [...watchedSessions] }
+  }
+
   async function handleRpc(method, params = {}) {
     switch (method) {
       case 'ping':
@@ -582,20 +915,30 @@ export function apply(ctx, config = {}) {
       case 'unsubscribe':
         dropSubscription(String(params.session_id), params.task_id ? String(params.task_id) : null)
         return { ok: true }
+      case 'session.watch.start':
+        return sessionWatch(params, true)
+      case 'session.watch.stop':
+        return sessionWatch(params, false)
+      case 'session.events':
+        return sessionEvents(params)
+      case 'session.state':
+        return sessionStateOf(String(params.session_id ?? ''))
+      case 'session.create':
+        return createSession(params)
+      case 'session.permission':
+        return setSessionPermission(params)
+      case 'input.send':
+        return sendInput(params)
+      case 'session.stop':
+        return stopSession(params)
       case 'session.history': {
         const sessionId = String(params.session_id ?? '')
         const limit = Math.max(1, Math.min(500, Number(params.limit ?? 200)))
         const query = svc('sessionQuery')
         if (typeof query?.readSurface !== 'function') throw new Error('sessionQuery.readSurface 不可用')
         const snapshot = await query.readSurface(sessionId)
-        const blocksOf = (content) => (Array.isArray(content) ? content : [])
-        const textOf = (content) => blocksOf(content)
-          .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-          .map((block) => block.text)
-          .join('')
-        const toolsOf = (content) => blocksOf(content)
-          .filter((block) => block?.type === 'tool-call' && typeof block.name === 'string')
-          .map((block) => block.name)
+        // toolsOf 返回 {call_id,name,arguments};这里只留工具名(旧手机页只显示名字)
+        const toolNamesOf = (content) => toolsOf(content).map((tool) => tool.name)
         const messages = []
         for (const event of snapshot?.events ?? []) {
           const data = event?.data ?? event ?? {}
@@ -609,7 +952,7 @@ export function apply(ctx, config = {}) {
           } else if (event?.type === 'assistant/message') {
             const message = data.message ?? data
             const text = textOf(message.content)
-            const tools = toolsOf(message.content)
+            const tools = toolNamesOf(message.content)
             if (text.trim() === '' && tools.length === 0) continue
             messages.push({ role: 'assistant', text, tools })
           }
@@ -724,7 +1067,7 @@ export function apply(ctx, config = {}) {
         node: {
           name: cfg.nodeName || 'dsh',
           platform: process.platform,
-          capabilities: ['workspaces', 'sessions', 'tasks', 'approval', 'events', 'v2'],
+          capabilities: ['workspaces', 'sessions', 'tasks', 'approval', 'events', 'session-stream', 'v2'],
           startedAt: startedAt,
           versions: { electron: process.versions.electron, node: process.versions.node },
         },
@@ -771,9 +1114,21 @@ export function apply(ctx, config = {}) {
     pendingApprovals.clear()
     tasks.clear()
     sessionSubs.clear()
+    watchedSessions.clear()
+    sessionStates.clear()
     disposeStream?.()
     disposeStatus?.()
     disposeError?.()
+    disposeSessionEvent?.()
+    disposeSessionLive?.()
+    disposeSessionStatus?.()
+    for (const dispose of disposeInbox ?? []) {
+      try {
+        dispose()
+      } catch {
+        // ignore
+      }
+    }
     disposeApproval?.()
     disposePreExecute?.()
     disposeAgentCreated?.()
@@ -803,3 +1158,4 @@ export function apply(ctx, config = {}) {
   globalThis[GUARD] = cleanup
   return cleanup
 }
+

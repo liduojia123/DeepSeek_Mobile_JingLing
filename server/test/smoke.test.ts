@@ -1186,7 +1186,292 @@ test('M5 记忆管理接口:列表/搜索/删除', async () => {
   assert.equal((after.json() as { total: number }).total, 0);
 });
 
+// ---------- M3.5:会话级桥接(手机与电脑共用同一个会话) ----------
+
+interface FakePlugin {
+  ws: {
+    send: (data: string) => void;
+    close: () => void;
+    addEventListener: (type: string, cb: (event: { data?: unknown }) => void) => void;
+  };
+  rpcCalls: Array<{ method: string; params: Record<string, unknown> }>;
+  emit: (message: Record<string, unknown>) => void;
+  waitFor: (method: string, timeoutMs?: number) => Promise<Record<string, unknown>>;
+  /** 等服务端确认 hello(节点注册完成) */
+  ready: Promise<void>;
+  close: () => Promise<void>;
+}
+
+/** 用 Node 自带的 WebSocket 客户端假装成 dsh 插件,验证服务端的会话级中继。 */
+async function startFakePlugin(port: number, token: string): Promise<FakePlugin> {
+  const WS = (globalThis as unknown as { WebSocket: new (url: string) => FakePlugin['ws'] }).WebSocket;
+  const ws = new WS(`ws://127.0.0.1:${port}/v1/harness/bridge?token=${token}`);
+  const rpcCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const waiters: Array<{ method: string; resolve: (params: Record<string, unknown>) => void }> = [];
+  let markReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve;
+  });
+  /** 假插件记住权限预设,好让 session.state 返回切换后的值 */
+  let permission = 'workspace-write';
+
+  ws.addEventListener('open', () => {
+    ws.send(
+      JSON.stringify({
+        type: 'hello',
+        node: { name: 'test-node', platform: 'test', capabilities: ['v2', 'session-stream'], startedAt: Date.now() },
+      }),
+    );
+  });
+
+  ws.addEventListener('message', (event) => {
+    const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+    if (message.type === 'hello_ok') {
+      markReady();
+      return;
+    }
+    if (message.type !== 'rpc') return;
+    const method = String(message.method);
+    const params = (message.params ?? {}) as Record<string, unknown>;
+    rpcCalls.push({ method, params });
+    for (const waiter of [...waiters]) {
+      if (waiter.method !== method) continue;
+      waiters.splice(waiters.indexOf(waiter), 1);
+      waiter.resolve(params);
+    }
+    let result: Record<string, unknown> = {};
+    switch (method) {
+      case 'session.events':
+        result = {
+          captured_through_seq: 2,
+          events: [
+            { seq: 1, type: 'user_message', data: { text: '电脑上问的话', source: 'user' } },
+            { seq: 2, type: 'assistant_message', data: { text: '电脑上的回答' } },
+          ],
+        };
+        break;
+      case 'session.state':
+        result = { status: 'idle', permission, model: 'deepseek/deepseek-chat' };
+        break;
+      case 'session.permission':
+        permission = String(params.mode ?? permission);
+        result = { session_id: params.session_id, mode: permission };
+        break;
+      case 'input.send':
+        result = { mode: params.mode === 'steer' ? 'steer' : 'followup', status: 'running' };
+        break;
+      case 'session.create':
+        result = { session_id: 'session-new-1', agent_preset: 'standard', permission: 'workspace-write' };
+        break;
+      default:
+        result = { ok: true };
+    }
+    ws.send(JSON.stringify({ type: 'rpc-result', id: message.id, ok: true, result }));
+  });
+
+  return {
+    ws,
+    rpcCalls,
+    emit: (message) => ws.send(JSON.stringify(message)),
+    ready,
+    waitFor: (method, timeoutMs = 4000) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`等待 RPC 超时:${method}`)), timeoutMs);
+        waiters.push({
+          method,
+          resolve: (params) => {
+            clearTimeout(timer);
+            resolve(params);
+          },
+        });
+      }),
+    close: async () => {
+      ws.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    },
+  };
+}
+
+interface SseCollector {
+  events: Array<{ kind: string; data: Record<string, unknown> }>;
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  controller: AbortController;
+}
+
+/** 读 SSE:收集到满足条件或超时为止(后续仍可继续 read)。 */
+async function openSse(url: string, headers: Record<string, string>): Promise<SseCollector> {
+  const controller = new AbortController();
+  const response = await fetch(url, { headers, signal: controller.signal });
+  assert.equal(response.status, 200);
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  return { events: [], reader, controller };
+}
+
+async function readSseUntil(
+  collector: SseCollector,
+  done: (events: SseCollector['events']) => boolean,
+  timeoutMs = 5000,
+): Promise<SseCollector['events']> {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+  while (!done(collector.events) && Date.now() < deadline) {
+    const chunk = await new Promise<{ value?: Uint8Array }>((resolve) => {
+      const timer = setTimeout(() => resolve({}), 100);
+      timer.unref();
+      void collector.reader.read().then((result) => {
+        clearTimeout(timer);
+        resolve(result.value === undefined ? {} : { value: result.value });
+      });
+    });
+    if (chunk.value) buffer += decoder.decode(chunk.value, { stream: true });
+    for (;;) {
+      const index = buffer.indexOf('\n\n');
+      if (index < 0) break;
+      const block = buffer.slice(0, index);
+      buffer = buffer.slice(index + 2);
+      const kindLine = block.split('\n').find((line) => line.startsWith('event: '));
+      const dataLine = block.split('\n').find((line) => line.startsWith('data: '));
+      if (!kindLine || !dataLine) continue;
+      collector.events.push({
+        kind: kindLine.slice('event: '.length),
+        data: JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>,
+      });
+    }
+  }
+  return collector.events;
+}
+
+test('M3.5 会话级流:bootstrap 历史 → 实时事件去重 → 断线按 after_seq 续传', async (t) => {
+  const { app, config } = makeHarness({ bridgeToken: 'test-bridge-token' });
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const port = (app.server.address() as { port: number }).port;
+  const plugin = await startFakePlugin(port, 'test-bridge-token');
+  await plugin.ready;
+  t.after(async () => {
+    await plugin.close();
+    // WS / SSE 是长连接,Fastify 的 close 会等它们;测试里强制断开避免挂住
+    app.server.closeAllConnections();
+    await app.close();
+  });
+
+  const headers = { ...auth(await pair(app)) };
+  const base = `http://127.0.0.1:${port}`;
+
+  // 首次连接:先补发历史(插件 session.events),再 ready
+  const first = await openSse(`${base}/v1/harness/sessions/session-a/stream?after_seq=0`, headers);
+  const initial = await readSseUntil(first, (events) => events.some((event) => event.kind === 'harness_session_ready'));
+  const ready = initial.find((event) => event.kind === 'harness_session_ready')!;
+  assert.equal(ready.data.session_id, 'session-a');
+  assert.equal(ready.data.last_seq, 2, '历史两条事件应各占一个 seq');
+  assert.deepEqual(
+    initial.filter((event) => event.kind === 'harness_session_event').map((event) => event.data.kind),
+    ['user_message', 'assistant_message'],
+  );
+  // 打开会话 = 让插件订阅该会话
+  assert.ok(plugin.rpcCalls.some((call) => call.method === 'session.watch.start' && call.params.session_id === 'session-a'));
+
+  // 插件上行持久事件:分配 seq=3
+  plugin.emit({
+    type: 'session_event',
+    session_id: 'session-a',
+    dsh_seq: 3,
+    kind: 'user_message',
+    payload: { text: '电脑上刚说的话', source: 'user' },
+  });
+  let events = await readSseUntil(first, (list) => list.filter((event) => event.kind === 'harness_session_event').length >= 3);
+  let durable = events.filter((event) => event.kind === 'harness_session_event');
+  assert.deepEqual(durable.map((event) => event.data.seq), [1, 2, 3]);
+  assert.equal((durable[2].data.payload as Record<string, unknown>).text, '电脑上刚说的话');
+
+  // 同一 dsh_seq 重发(插件重连补发)不应重复插入
+  plugin.emit({
+    type: 'session_event',
+    session_id: 'session-a',
+    dsh_seq: 3,
+    kind: 'user_message',
+    payload: { text: '电脑上刚说的话', source: 'user' },
+  });
+  plugin.emit({ type: 'live', session_id: 'session-a', kind: 'status', status: 'running' });
+  events = await readSseUntil(first, (list) => list.some((event) => event.kind === 'harness_session_live'));
+  const live = events.find((event) => event.kind === 'harness_session_live')!;
+  assert.equal(live.data.kind, 'status');
+  assert.equal(live.data.status, 'running');
+  assert.equal(events.filter((event) => event.kind === 'harness_session_event').length, 3, '重复 dsh_seq 不能产生第 4 条');
+
+  // 手机输入:auto 由插件判定,服务端回显 input_echo
+  const input = await app.inject({
+    method: 'POST',
+    url: '/v1/harness/sessions/session-a/input',
+    payload: { text: '帮我看下测试', mode: 'auto' },
+    headers,
+  });
+  assert.equal(input.statusCode, 200, input.payload);
+  assert.equal((input.json() as { mode: string }).mode, 'followup');
+  const inputCall = plugin.rpcCalls.find((call) => call.method === 'input.send');
+  assert.ok(inputCall, '应把输入转发给插件');
+  assert.equal(inputCall.params.text, '帮我看下测试');
+
+  first.controller.abort();
+
+  // 断线重连:after_seq=2 只补发 seq>2 的,不重复历史
+  const second = await openSse(`${base}/v1/harness/sessions/session-a/stream?after_seq=2`, headers);
+  const resumed = await readSseUntil(second, (list) => list.some((event) => event.kind === 'harness_session_ready'));
+  const replayed = resumed.filter((event) => event.kind === 'harness_session_event');
+  assert.deepEqual(replayed.map((event) => event.data.seq), [3]);
+  second.controller.abort();
+});
+
+test('M3.5 新会话与权限:手机建会话走插件 session.create,权限可会话级切换', async (t) => {
+  const { app } = makeHarness({ bridgeToken: 'test-bridge-token' });
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const port = (app.server.address() as { port: number }).port;
+  const plugin = await startFakePlugin(port, 'test-bridge-token');
+  await plugin.ready;
+  t.after(async () => {
+    await plugin.close();
+    app.server.closeAllConnections();
+    await app.close();
+  });
+
+  const headers = { ...auth(await pair(app)) };
+  const base = `http://127.0.0.1:${port}`;
+
+  const created = await app.inject({
+    method: 'POST',
+    url: '/v1/harness/sessions',
+    payload: { cwd: 'D:\\workspace', permission: 'workspace-write' },
+    headers,
+  });
+  assert.equal(created.statusCode, 200, created.payload);
+  const body = created.json() as { session_id: string };
+  assert.equal(body.session_id, 'session-new-1');
+  const createCall = plugin.rpcCalls.find((call) => call.method === 'session.create');
+  assert.ok(createCall, '应把新会话请求转发给插件');
+  assert.equal(createCall.params.cwd, 'D:\\workspace');
+  assert.equal(createCall.params.permission, 'workspace-write');
+
+  const permission = await app.inject({
+    method: 'PUT',
+    url: `/v1/harness/sessions/${body.session_id}/permission`,
+    payload: { mode: 'danger-full-access' },
+    headers,
+  });
+  assert.equal(permission.statusCode, 200, permission.payload);
+  assert.equal((permission.json() as { mode: string }).mode, 'danger-full-access');
+  assert.ok(plugin.rpcCalls.some((call) => call.method === 'session.permission'));
+
+  const state = await app.inject({
+    method: 'GET',
+    url: `/v1/harness/sessions/${body.session_id}/state`,
+    headers,
+  });
+  assert.equal(state.statusCode, 200);
+  assert.equal((state.json() as { permission: string }).permission, 'danger-full-access');
+});
+
 // ---------- 收口:设备令牌吊销 ----------
+
 
 test('设备吊销:列表标出本机,吊销后旧令牌立即 401,且不再出现在列表里', async (t) => {
   const { app } = makeHarness({ pairingCodeFixed: true });

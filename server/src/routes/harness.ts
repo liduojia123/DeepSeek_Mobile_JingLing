@@ -45,6 +45,29 @@ interface PendingRpc {
   timer: NodeJS.Timeout;
 }
 
+/** M3.5:会话级流事件(手机时间线的最小单位) */
+export interface SessionStreamEvent {
+  seq: number;
+  kind: string;
+  payload: Record<string, unknown>;
+  dshSeq: number | null;
+  ts: string;
+}
+
+interface SessionStreamState {
+  sessionId: string;
+  nodeId: string;
+  /** 已分配的最大本地 seq */
+  seq: number;
+  listeners: Set<(event: SessionStreamEvent) => void>;
+  /** 插件侧是否已订阅该会话 */
+  watching: boolean;
+  status: string;
+  permission: string | null;
+  model: string | null;
+  bootstrapped: boolean;
+}
+
 const MAX_BUFFERED_EVENTS = 500;
 /** 超过这个时间没收到任何消息的节点视为离线(插件 25s 心跳) */
 const NODE_STALE_MS = 90_000;
@@ -55,6 +78,15 @@ const safeEqual = (a: string, b: string): boolean => {
   return left.length === right.length && timingSafeEqual(left, right);
 };
 
+const safeParse = (raw: string): Record<string, unknown> => {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+};
+
 /**
  * dsh 远程开发桥的中继中心。
  * 插件(电脑)主动出站 WS 接入,手机通过 REST/SSE 操作;两者用不同的令牌鉴权。
@@ -63,6 +95,7 @@ export class HarnessHub {
   private readonly nodes = new Map<string, NodeState>();
   private readonly tasks = new Map<string, TaskState>();
   private readonly rpcs = new Map<string, PendingRpc>();
+  private readonly sessions = new Map<string, SessionStreamState>();
 
   constructor(
     private readonly db: Db,
@@ -204,6 +237,288 @@ export class HarnessHub {
     const task = this.getTask(taskId);
     task.listeners.add(listener);
     return () => task.listeners.delete(listener);
+  }
+
+  // ---------- M3.5:会话级流 ----------
+
+  private storedSeq(sessionId: string): number {
+    const row = this.db
+      .prepare('SELECT MAX(seq) AS seq FROM harness_stream_event WHERE session_id = ?')
+      .get(sessionId) as { seq: number | null } | undefined;
+    return row?.seq ?? 0;
+  }
+
+  private sessionState(sessionId: string, nodeId = ''): SessionStreamState {
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      if (nodeId !== '' && existing.nodeId === '') existing.nodeId = nodeId;
+      return existing;
+    }
+    const state: SessionStreamState = {
+      sessionId,
+      nodeId,
+      seq: this.storedSeq(sessionId),
+      listeners: new Set(),
+      watching: false,
+      status: 'idle',
+      permission: null,
+      model: null,
+      bootstrapped: false,
+    };
+    this.sessions.set(sessionId, state);
+    return state;
+  }
+
+  /** 会话所属节点;记录的节点掉线时回退到任意在线节点 */
+  private resolveSessionNode(state: SessionStreamState): NodeState {
+    const known = state.nodeId === '' ? undefined : this.nodes.get(state.nodeId);
+    const node = known ?? this.resolveNode();
+    state.nodeId = node.id;
+    return node;
+  }
+
+  /** 首次打开会话:从电脑拉最近的历史事件并落库(之后按 seq 续传) */
+  async ensureSessionStream(sessionId: string, nodeId?: string): Promise<SessionStreamState> {
+    const state = this.sessionState(sessionId, nodeId ?? '');
+    if (state.bootstrapped) return state;
+    state.bootstrapped = true;
+    let node: NodeState;
+    try {
+      node = state.nodeId !== '' && this.nodes.has(state.nodeId)
+        ? this.nodes.get(state.nodeId)!
+        : this.resolveNode(nodeId ?? undefined);
+    } catch {
+      return state;
+    }
+    state.nodeId = node.id;
+    if (state.seq === 0) {
+      try {
+        const result = (await this.rpc(node, 'session.events', { session_id: sessionId, limit: 300 }, 30_000)) as {
+          events?: Array<{ seq?: number; type?: string; data?: Record<string, unknown> }>;
+        };
+        for (const item of result?.events ?? []) {
+          const kind = String(item.type ?? '');
+          if (kind === '') continue;
+          this.persistSessionEvent(sessionId, Number(item.seq ?? 0) || null, kind, item.data ?? {});
+        }
+      } catch {
+        // 历史拉不到不影响实时:手机仍会从空时间线开始
+      }
+    }
+    await this.refreshSessionState(sessionId, node).catch(() => undefined);
+    return state;
+  }
+
+  /** 从电脑读一次会话状态(状态/权限/模型) */
+  async refreshSessionState(sessionId: string, node?: NodeState): Promise<void> {
+    const state = this.sessionState(sessionId);
+    const target = node ?? this.nodes.get(state.nodeId);
+    if (!target) return;
+    const info = (await this.rpc(target, 'session.state', { session_id: sessionId }).catch(() => null)) as
+      | { status?: string; permission?: string | null; model?: string | null }
+      | null;
+    if (!info) return;
+    if (typeof info.status === 'string') state.status = info.status;
+    if (info.permission !== undefined) state.permission = info.permission;
+    if (info.model !== undefined) state.model = info.model;
+  }
+
+  getSessionState(sessionId: string) {
+    const state = this.sessionState(sessionId);
+    return {
+      session_id: sessionId,
+      status: state.status,
+      permission: state.permission,
+      model: state.model,
+      watching: state.watching,
+      last_seq: state.seq,
+    };
+  }
+
+  private persistSessionEvent(
+    sessionId: string,
+    dshSeq: number | null,
+    kind: string,
+    payload: Record<string, unknown>,
+  ): SessionStreamEvent | null {
+    if (dshSeq !== null) {
+      const duplicate = this.db
+        .prepare('SELECT 1 AS ok FROM harness_stream_event WHERE session_id = ? AND dsh_seq = ?')
+        .get(sessionId, dshSeq);
+      if (duplicate) return null;
+    }
+    const state = this.sessionState(sessionId);
+    const seq = Math.max(state.seq, this.storedSeq(sessionId)) + 1;
+    const ts = nowIso();
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO harness_stream_event (session_id, seq, dsh_seq, kind, payload_json, ts)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(sessionId, seq, dshSeq, kind, JSON.stringify(payload), ts);
+    } catch {
+      return null;
+    }
+    state.seq = seq;
+    const event: SessionStreamEvent = { seq, kind, payload, dshSeq, ts };
+    this.broadcastSession(sessionId, event);
+    return event;
+  }
+
+  private broadcastSession(sessionId: string, event: SessionStreamEvent): void {
+    const state = this.sessions.get(sessionId);
+    if (!state) return;
+    for (const listener of state.listeners) {
+      try {
+        listener(event);
+      } catch {
+        // 单个订阅者异常不影响其它
+      }
+    }
+  }
+
+  /** 手机侧打开会话:补发 after_seq 之后的事件,并保持订阅 */
+  sessionEvents(sessionId: string, afterSeq: number, limit = 2000): SessionStreamEvent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT seq, dsh_seq, kind, payload_json, ts FROM harness_stream_event
+          WHERE session_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`,
+      )
+      .all(sessionId, afterSeq, limit) as Array<{
+      seq: number;
+      dsh_seq: number | null;
+      kind: string;
+      payload_json: string;
+      ts: string;
+    }>;
+    return rows.map((row) => ({
+      seq: row.seq,
+      kind: row.kind,
+      dshSeq: row.dsh_seq,
+      payload: safeParse(row.payload_json),
+      ts: row.ts,
+    }));
+  }
+
+  async subscribeSession(sessionId: string, listener: (event: SessionStreamEvent) => void): Promise<() => void> {
+    const state = await this.ensureSessionStream(sessionId);
+    state.listeners.add(listener);
+    let node: NodeState | undefined;
+    try {
+      node = this.resolveSessionNode(state);
+    } catch {
+      node = undefined;
+    }
+    if (!state.watching && node) {
+      state.watching = true;
+      void this.rpc(node, 'session.watch.start', { session_id: sessionId }).catch(() => {
+        state.watching = false;
+      });
+    }
+    return () => {
+      state.listeners.delete(listener);
+      if (state.listeners.size === 0 && state.watching) {
+        state.watching = false;
+        const target = this.nodes.get(state.nodeId);
+        if (target) void this.rpc(target, 'session.watch.stop', { session_id: sessionId }).catch(() => undefined);
+      }
+    };
+  }
+
+  /** 插件上行的持久会话事件(已被压缩) */
+  handleSessionEvent(
+    nodeId: string,
+    message: Record<string, unknown>,
+  ): void {
+    const sessionId = String(message.session_id ?? '');
+    if (sessionId === '') return;
+    const kind = String(message.kind ?? '');
+    if (kind === '') return;
+    // dsh 的 seq 从 0 开始,不能用 `|| null`(会把第一事件当"没有 seq",去重失效)
+    const rawSeq = Number(message.dsh_seq);
+    const dshSeq = Number.isFinite(rawSeq) && rawSeq >= 0 ? rawSeq : null;
+    const payload = (message.payload ?? {}) as Record<string, unknown>;
+    if (kind === 'turn_start') this.sessionState(sessionId, nodeId).status = 'running';
+    if (kind === 'turn_end') this.sessionState(sessionId, nodeId).status = 'idle';
+    this.persistSessionEvent(sessionId, dshSeq, kind, payload);
+  }
+
+  /** 插件上行的瞬时事件(打字增量/状态/排队),不落库 */
+  handleSessionLive(nodeId: string, message: Record<string, unknown>): void {
+    const sessionId = String(message.session_id ?? '');
+    if (sessionId === '') return;
+    const state = this.sessionState(sessionId, nodeId);
+    if (message.kind === 'status' && typeof message.status === 'string') state.status = message.status;
+    for (const listener of state.listeners) {
+      try {
+        listener({ seq: 0, kind: '__live__', payload: message, dshSeq: null, ts: nowIso() });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /** 手机输入:auto = 电脑上正在跑就插话,空闲就追加一轮 */
+  async sendSessionInput(sessionId: string, text: string, mode: 'auto' | 'steer' | 'followup') {
+    const state = this.sessionState(sessionId);
+    const node = this.resolveSessionNode(state);
+    state.nodeId = node.id;
+    const result = (await this.rpc(node, 'input.send', { session_id: sessionId, text, mode })) as
+      | { mode?: string; status?: string }
+      | undefined;
+    const applied = result?.mode === 'steer' ? 'steer' : 'followup';
+    state.status = result?.status === 'running' ? 'running' : state.status;
+    // 回显给手机(不落库):持久 user_message 到达后由手机替换
+    this.handleSessionLive(node.id, {
+      session_id: sessionId,
+      kind: 'input_echo',
+      text,
+      mode: applied,
+    });
+    return { session_id: sessionId, mode: applied, status: state.status };
+  }
+
+  async stopSession(sessionId: string) {
+    const state = this.sessionState(sessionId);
+    const node = this.resolveSessionNode(state);
+    await this.rpc(node, 'session.stop', { session_id: sessionId }).catch(() => undefined);
+    state.status = 'idle';
+    return { ok: true };
+  }
+
+  async setSessionPermission(sessionId: string, mode: string) {
+    const state = this.sessionState(sessionId);
+    const node = this.resolveSessionNode(state);
+    const result = (await this.rpc(node, 'session.permission', { session_id: sessionId, mode })) as
+      | { mode?: string }
+      | undefined;
+    state.permission = result?.mode ?? mode;
+    return { session_id: sessionId, mode: state.permission };
+  }
+
+  async createSession(input: {
+    cwd: string;
+    nodeId?: string;
+    agentPreset?: string;
+    permission?: string;
+  }) {
+    const node = this.resolveNode(input.nodeId);
+    const result = (await this.rpc(
+      node,
+      'session.create',
+      {
+        cwd: input.cwd,
+        ...(input.agentPreset ? { agent_preset: input.agentPreset } : {}),
+        ...(input.permission ? { permission: input.permission } : {}),
+      },
+      30_000,
+    )) as { session_id?: string; agent_preset?: string | null; permission?: string | null };
+    const sessionId = String(result?.session_id ?? '');
+    if (sessionId === '') throw new ApiError(502, 'create_failed', '电脑没有返回新会话 id');
+    const state = this.sessionState(sessionId, node.id);
+    state.permission = result?.permission ?? input.permission ?? null;
+    return { session_id: sessionId, node_id: node.id, agent_preset: result?.agent_preset ?? null };
   }
 
   private pushEvent(task: TaskState, kind: string, payload: Record<string, unknown>): StoredEvent {
@@ -348,6 +663,16 @@ export class HarnessHub {
         return;
       }
 
+      if (message.type === 'session_event') {
+        this.handleSessionEvent(nodeId, message);
+        return;
+      }
+
+      if (message.type === 'live') {
+        this.handleSessionLive(nodeId, message);
+        return;
+      }
+
       if (message.type === 'confirm_request') {
         const task = this.tasks.get(String(message.task_id));
         if (!task) return;
@@ -397,6 +722,25 @@ export class HarnessHub {
           this.pushEvent(task, 'error', { message: '电脑节点断开连接' });
         }
       }
+      // 会话级:通知正在看的手机会话页(不结束 SSE,等节点回来续传)
+      for (const session of this.sessions.values()) {
+        if (session.nodeId !== nodeId) continue;
+        session.watching = false;
+        session.status = 'idle';
+        for (const listener of session.listeners) {
+          try {
+            listener({
+              seq: 0,
+              kind: '__live__',
+              payload: { kind: 'error', message: '电脑节点断开连接' },
+              dshSeq: null,
+              ts: nowIso(),
+            });
+          } catch {
+            // ignore
+          }
+        }
+      }
     });
   }
 
@@ -426,6 +770,138 @@ export function registerHarnessRoutes(
   config: Config,
 ): void {
   secured.get('/v1/harness/nodes', async () => ({ nodes: hub.listNodes() }));
+
+  // ---------- M3.5:会话级(手机与电脑共用同一个会话) ----------
+
+  /** 新建 dsh 会话(手机上"开新会话") */
+  secured.post('/v1/harness/sessions', async (request) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const cwd = String(body.cwd ?? '');
+    if (cwd === '') throw new ApiError(400, 'validation_error', '需要 cwd(工作区目录)');
+    return hub.createSession({
+      cwd,
+      nodeId: typeof body.node_id === 'string' ? body.node_id : undefined,
+      agentPreset: typeof body.agent_preset === 'string' ? body.agent_preset : undefined,
+      permission: typeof body.permission === 'string' ? body.permission : undefined,
+    });
+  });
+
+  secured.get('/v1/harness/sessions/:id/state', async (request) => {
+    const { id } = request.params as { id: string };
+    const state = hub.getSessionState(id);
+    await hub.refreshSessionState(id).catch(() => undefined);
+    return { ...state, ...hub.getSessionState(id) };
+  });
+
+  secured.put('/v1/harness/sessions/:id/permission', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const mode = String(body.mode ?? '');
+    if (mode === '') throw new ApiError(400, 'validation_error', '需要 mode');
+    return hub.setSessionPermission(id, mode);
+  });
+
+  /** 手机输入进会话:mode=auto 时电脑上正在跑就插话,空闲就追加一轮 */
+  secured.post('/v1/harness/sessions/:id/input', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const text = String(body.text ?? '').trim();
+    const mode = body.mode === 'steer' || body.mode === 'followup' ? body.mode : 'auto';
+    if (text === '') throw new ApiError(400, 'validation_error', '需要非空 text');
+    return hub.sendSessionInput(id, text, mode);
+  });
+
+  secured.post('/v1/harness/sessions/:id/stop', async (request) => {
+    const { id } = request.params as { id: string };
+    return hub.stopSession(id);
+  });
+
+  /**
+   * 会话实时流:先补发 after_seq 之后的事件(断线续传),再接实时。
+   * 首帧 harness_session_ready 带 last_seq/status,客户端从它开始算。
+   */
+  secured.get('/v1/harness/sessions/:id/stream', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const query = request.query as Record<string, unknown>;
+    const afterSeq = Number(query.after_seq ?? 0) || 0;
+
+    await hub.ensureSessionStream(id, typeof query.node_id === 'string' ? query.node_id : undefined);
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      ...(config.devCors ? DEV_CORS_HEADERS : {}),
+    });
+
+    const write = (kind: string, payload: unknown): void => {
+      if (raw.destroyed || raw.writableEnded) return;
+      raw.write(sseEncode(kind, payload));
+    };
+
+    const flush = (event: SessionStreamEvent): void => {
+      if (event.kind === '__live__') {
+        write('harness_session_live', { session_id: id, ...event.payload });
+        return;
+      }
+      write('harness_session_event', {
+        session_id: id,
+        seq: event.seq,
+        dsh_seq: event.dshSeq,
+        kind: event.kind,
+        payload: event.payload,
+      });
+    };
+
+    // 先订阅再补发:补发期间到达的事件先缓冲,避免"补发完到开始订阅"之间丢事件
+    const buffered: SessionStreamEvent[] = [];
+    let streaming = false;
+    const unsubscribe = await hub.subscribeSession(id, (event) => {
+      if (!streaming) {
+        buffered.push(event);
+        return;
+      }
+      flush(event);
+    });
+
+    const backfill = hub.sessionEvents(id, afterSeq);
+    let lastSeq = afterSeq;
+    for (const event of backfill) {
+      flush(event);
+      lastSeq = Math.max(lastSeq, event.seq);
+    }
+    const state = hub.getSessionState(id);
+    write('harness_session_ready', {
+      session_id: id,
+      last_seq: Math.max(lastSeq, state.last_seq),
+      status: state.status,
+      permission: state.permission,
+      model: state.model,
+    });
+
+    streaming = true;
+    for (const event of buffered) {
+      if (event.kind !== '__live__' && event.seq <= lastSeq) continue;
+      flush(event);
+    }
+
+    const heartbeat = setInterval(() => {
+      if (!raw.destroyed && !raw.writableEnded) raw.write(': ping\n\n');
+    }, 15_000);
+    heartbeat.unref();
+
+    const close = (): void => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      if (!raw.writableEnded) raw.end();
+    };
+    raw.on('close', close);
+    raw.on('error', close);
+    return reply;
+  });
+
 
   secured.get('/v1/harness/workspaces', async (request) => {
     const nodeId = (request.query as Record<string, unknown>)?.node_id;
@@ -542,3 +1018,4 @@ export function registerHarnessRoutes(
     return reply;
   });
 }
+

@@ -140,6 +140,21 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 
 实现要点:插件必须以 `dsh.bundle.patch` 形式打包(`package.json`+`cordis.patch.yml`+`apply(ctx,config)`);访问服务用 `ctx.get(name)`(直接 `ctx.xxx` 需 `inject`);热重载会残留旧实例,已加单例守卫 + `stand_down` 协议;真实代码见 `bridge-dsh/` 与 `server/src/routes/harness.ts`。
 
+**会话级桥接(M3.5,2026-11-16):手机 = 同一个会话的第二窗口**
+
+M3 的"任务级"接口只能看到手机自己派的任务;要"和电脑上同一份对话",接口换成会话级。已验证(本机 `app.asar` 内 `@deepseek-ai/*` 源码 + 运行时):
+
+| 能力 | 真接口 | 要点 |
+|---|---|---|
+| 持久事件(历史+实时同源) | `ctx.on('session/event', (session, event) => …)`,`event={type,seq,time,data}` | **必须 `{global:true}`**:本地用户开的会话不在插件作用域里,cordis 默认按上下文过滤 |
+| 历史 | `sessionQuery.readSurface(sessionId)` → `{events, capturedThroughSeq}` | 事件自带 `seq`;手机时间线直接从这里起步 |
+| 实时增量 | `agent/assistant-stream` 的 `chunk`:`text-delta`/`reasoning-delta` | 仅做"正在打字",不落库 |
+| 输入 | `agent.steer()`(下一步/当前轮改方向)、`agent.followup()`(下一轮)、`agent.cancel({kind:'user'})` | `agent.status` 只有 `idle`/`running` |
+| 排队提示 | `agent/inbox/inserted|claimed|discarded` | 手机上显示"已排队/已采纳" |
+| 事件类型 | `turn/start|end`、`step/start|end`、`user/message`、`assistant/message{message,stream,usage,interrupted}`、`tool/call{name,arguments}`、`tool/result{message,error}` | 内容块:`text`/`reasoning`/`image`/`file`/`tool-call` |
+
+实现:服务器给每会话维护本地 `seq` 游标(表 `harness_stream_event`,`dsh_seq` 唯一去重),手机 `GET /v1/harness/sessions/{id}/stream?after_seq=N` 断线续传;只有手机在看时(引用计数)才让插件 `session.watch.start`。详见 `docs/HANDOFF-M3.5.md`。
+
 **Spike 闸门(M3 首日)**:克隆 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness),读 `docs/architecture.md`、`docs/development.md`,对照本机 dsh 实际版本验证上述五项;运行时处于开发者预览期,一切以源码为准。
 
 **备选方案**(若④拦截确认经插件 API 不可行):电脑上跑外部桥进程,代理 dsh Web UI 本地接口(`npx @deepseek-ai/dsh web` 默认 `127.0.0.1:3080`)。预览期内部接口有变更风险,故插件方案优先。
@@ -213,6 +228,19 @@ event: error             {code, message}
 | `/v1/harness/tasks` | POST | 派任务(工作区 + prompt)→ task_id |
 | `/v1/harness/tasks/{id}/confirm` | POST | 批准/拒绝工具调用(**默认拒绝:超时未确认不执行**) |
 | `/v1/harness/tasks/{id}/events` | GET(SSE) | 任务实时事件流(输出/工具调用/确认请求/完成) |
+
+**会话级(M3.5)**:手机与电脑共用同一个会话。
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/v1/harness/sessions` | POST | 在电脑上新建会话(`cwd` + 可选 preset/权限)→ `session_id` |
+| `/v1/harness/sessions/{id}/stream` | GET(SSE) | 会话时间线:`?after_seq=N` 续传;首帧 `harness_session_ready{last_seq,status,permission}` |
+| `/v1/harness/sessions/{id}/input` | POST | 手机输入:`{text, mode: auto\|steer\|followup}`;auto = 正在跑就插话,空闲就追加 |
+| `/v1/harness/sessions/{id}/stop` | POST | 中断电脑上的当前回合 |
+| `/v1/harness/sessions/{id}/state` | GET | 会话状态(运行中/权限/模型) |
+| `/v1/harness/sessions/{id}/permission` | PUT | 会话级权限预设(沙箱内 / 完全访问) |
+
+会话流事件:`harness_session_event{seq, dsh_seq, kind, payload}`(kind: `user_message`/`assistant_message`/`tool_call`/`tool_result`/`turn_start`/`turn_end`)、`harness_session_live{kind: text|reasoning|status|inbox|input_echo}`。`seq` 是服务器本地游标,断线用它续传;`dsh_seq` 只用于去重。
 
 ### 5.2 数据模型(SQLite 起步,预留 Postgres 迁移)
 
@@ -353,3 +381,7 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 
 | 2026-11-15 | **v1.0.10 收口三项** | ①**代码语法高亮**:自研轻量 tokenizer(关键字/字符串/注释/数字,按语言给词表,`pre` 块用 flutter_markdown 的 builder 换成带语言标签+复制按钮的代码块),不引入 flutter_highlight/highlight —— 那类库会把上百种语言语法打进 APK,而这里只需要给模型输出的常见代码上色;新增直接依赖 `markdown`(原本是 flutter_markdown 的传递依赖,只为拿 `md.Element` 类型,不增加包体)。②**输出侧拒答结构化标识**:上游实测无结构化信号(2026-11-14 结论仍成立),改为服务端启发式识别(短答 ≤400 字 + 开头 80 字内 + 真实拒答话术模式),命中时发 `safety_block{source:"output"}` 且 `stop_reason=refusal`,正文照常下发,**标识落库** `message.safety_json` 供历史回放;输入侧仍映射上游 400 `Content Exists Risk`(`source:"input"`)。③**设备令牌吊销**:`GET /v1/devices` + `DELETE /v1/devices/{id}`,吊销 = `token_hash` 换成 `revoked:<id>`(永不命中 sha256)+ 记 `revoked_at`,设备行保留留痕;手机端设置 →「设备管理」可吊销任意设备(含本机,吊销本机即回到配对页) |
 | 2026-11-15 | 拒答启发式的真实 fixture | 真实 key 实测(2026-11-15)拒答开场白形如「这个我不能写。」「这个我也不会教。」「这个我没法帮你写。」——谓语是任意动作,所以模式不能只列几个动词;这两条原文已写进 `server/test/smoke.test.ts` 作为回归 fixture。已知限制:改写得很客气的拒答、纯英文长拒答可能漏判(漏判只是不打标识,正文照常显示);启发式只影响标识,不影响内容 |
+
+| 2026-11-16 | **M3.5 会话级桥接(v1.1.0)** | 需求:手机要接的是**电脑上正开着的同一个会话**(能看到同一份对话),同时能新建会话;场景是离开电脑时派任务/看进度,所以"跑在电脑上、手机不盯着也不丢"是硬要求。做法:插件把订阅从 `task_id` 抬到 `session_id`(`ctx.on('session/event', …, {global:true})` + `readSurface` 历史 + `agent/assistant-stream` 增量),服务器给每个会话维护本地 `seq` 游标并用 `dsh_seq` 去重,手机 `stream?after_seq=N` 断线续传;输入 `mode=auto`(running→steer,idle→followup),手机输入回显在持久 `user_message` 到达后消失。**产品语义**:本地用户永远优先(远程确认门只在会话非完全访问时生效,M3 已定);手机消息带 `source.kind=jingling`,时间线标「手机」 |
+| 2026-11-16 | M3.5 实现坑 | ①cordis 事件默认按上下文过滤,插件 ctx 收不到本地用户会话的 `session/event`,必须 `{global:true}`(否则只有插件自己建的 agent 有事件);②服务器本地 `seq` 与 dsh `dsh_seq` 要分开:前者给手机续传、后者只做去重,插件重连补发才不会出现重复消息;③`readSurface` 的第一页会带 `capturedThroughSeq`,历史与实时用同一套事件格式拼起来比"消息 + 事件两套模型"省一个数量级;④只让手机在看时说 `session.watch.start`(引用计数),否则电脑上每个会话都在往服务器推流 |
+

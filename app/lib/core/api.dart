@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/events.dart';
 import '../models/harness.dart';
+import '../models/harness_stream.dart';
 import '../models/models.dart';
 import 'sse_client.dart';
 
@@ -343,8 +344,7 @@ class ApiClient {
   }
   // ---------- dsh 远程开发桥(M3) ----------
 
-  Future<List<HarnessNode>> harnessNodes() async {
-    final json = await _guard(() async =>
+  Future<List<HarnessNode>> harnessNodes() async {    final json = await _guard(() async =>
         _decode(await _client.get(_uri('/v1/harness/nodes'), headers: _headers())));
     return ((json['nodes'] as List?) ?? const [])
         .whereType<Map>()
@@ -461,6 +461,132 @@ class ApiClient {
       throw ApiException('电脑连接中断:${error.message}');
     } finally {
       client.close();
+    }
+  }
+
+  // ---------- 会话级桥接(M3.5,手机与电脑共用同一个会话) ----------
+
+  /// 会话实时流(SSE):先补发 afterSeq 之后的持久事件,再接实时;断线用 lastSeq 续传。
+  Stream<HarnessStreamEvent> harnessSessionStream(String sessionId, {int afterSeq = 0}) async* {
+    final client = http.Client();
+    try {
+      final request = http.Request(
+        'GET',
+        _uri('/v1/harness/sessions/$sessionId/stream', {'after_seq': '$afterSeq'}),
+      )..headers.addAll(_headers(jsonContentType: false));
+      final response = await client.send(request);
+      if (response.statusCode != 200) {
+        final text = await response.stream.bytesToString();
+        throw _errorFrom(response.statusCode, text);
+      }
+      final parser = SseStreamParser();
+      await for (final chunk in response.stream.transform(utf8.decoder)) {
+        for (final sse in parser.addChunk(chunk)) {
+          final event = _decodeHarnessStreamEvent(sse);
+          if (event != null) yield event;
+        }
+      }
+      for (final sse in parser.flush()) {
+        final event = _decodeHarnessStreamEvent(sse);
+        if (event != null) yield event;
+      }
+    } on ApiException {
+      rethrow;
+    } on http.ClientException catch (error) {
+      throw ApiException('会话连接中断:${error.message}');
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 手机输入进会话:auto = 电脑上正在跑就插话,空闲就追加一轮。
+  Future<Map<String, dynamic>> harnessSessionInput(
+    String sessionId, {
+    required String text,
+    String mode = 'auto',
+  }) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/harness/sessions/$sessionId/input'),
+          headers: _headers(),
+          body: jsonEncode({'text': text, 'mode': mode}),
+        )));
+    return json;
+  }
+
+  /// 停止电脑上的当前回合。
+  Future<void> harnessStopSession(String sessionId) async {
+    await _guard(() async {
+      final response = await _client.post(
+        _uri('/v1/harness/sessions/$sessionId/stop'),
+        headers: _headers(),
+        body: '{}',
+      );
+      _decode(response);
+      return null;
+    });
+  }
+
+  /// 会话状态(电脑上是否在跑 / 权限预设 / 模型)。
+  Future<Map<String, dynamic>> harnessSessionState(String sessionId) async {
+    final json = await _guard(() async =>
+        _decode(await _client.get(_uri('/v1/harness/sessions/$sessionId/state'), headers: _headers())));
+    return json;
+  }
+
+  /// 会话级权限预设:workspace-write(沙箱内)/ danger-full-access(完全访问)。
+  Future<void> harnessSetSessionPermission(String sessionId, String mode) async {
+    await _guard(() async {
+      final response = await _client.put(
+        _uri('/v1/harness/sessions/$sessionId/permission'),
+        headers: _headers(),
+        body: jsonEncode({'mode': mode}),
+      );
+      _decode(response);
+      return null;
+    });
+  }
+
+  /// 在电脑上新建一个 dsh 会话,cwd 决定工作区。
+  Future<String> harnessCreateSession({
+    required String cwd,
+    String? agentPreset,
+    String? permission,
+  }) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/harness/sessions'),
+          headers: _headers(),
+          body: jsonEncode({
+            'cwd': cwd,
+            'agent_preset': ?agentPreset,
+            'permission': ?permission,
+          }),
+        )));
+    return (json['session_id'] as String?) ?? '';
+  }
+
+  HarnessStreamEvent? _decodeHarnessStreamEvent(SseEvent sse) {
+    try {
+      final decoded = jsonDecode(sse.data);
+      if (decoded is! Map) return null;
+      final json = Map<String, dynamic>.from(decoded);
+      switch (sse.event) {
+        case 'harness_session_ready':
+          return HarnessSessionReady(
+            sessionId: (json['session_id'] as String?) ?? '',
+            lastSeq: (json['last_seq'] as num?)?.toInt() ?? 0,
+            status: (json['status'] as String?) ?? 'idle',
+            permission: json['permission'] as String?,
+            model: json['model'] as String?,
+          );
+        case 'harness_session_event':
+          return HarnessSessionEvent.fromJson(json);
+        case 'harness_session_live':
+          return HarnessSessionLive.fromJson(json);
+        default:
+          return null;
+      }
+    } catch (_) {
+      return null;
     }
   }
 

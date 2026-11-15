@@ -1,11 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../core/api.dart';
 import '../core/harness_providers.dart';
+import '../core/providers.dart';
 import '../models/harness.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../widgets/thinking_block.dart';
+import 'harness_session_page.dart';
 
 /// 电脑页:查看电脑上的 dsh 工作区/会话,远程派任务、看实时输出、逐条确认工具调用。
 class ComputerPage extends ConsumerStatefulWidget {
@@ -102,6 +105,12 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
               : null,
           title: const Text('电脑'),
           actions: [
+            if (!state.viewingTask && !state.viewingSession)
+              IconButton(
+                tooltip: '在电脑上新建会话',
+                onPressed: () => _createSession(state),
+                icon: const Icon(Icons.add_comment_outlined),
+              ),
             IconButton(
               tooltip: '刷新',
               onPressed: () => ref.read(harnessProvider.notifier).load(),
@@ -287,7 +296,11 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      onTap: () => ref.read(harnessProvider.notifier).openSession(session.id),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => HarnessSessionPage(sessionId: session.id, title: session.displayName),
+        ),
+      ),
     );
   }
 
@@ -531,6 +544,81 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
         ],
       ),
     );
+  }
+
+  /// 在电脑上新建一个 dsh 会话:选工作区 + 权限,建完直接进会话页。
+  Future<void> _createSession(HarnessState state) async {
+    final api = ref.read(apiProvider);
+    if (api == null) return;
+    final workspaces = state.snapshot?.workspaces ?? const <HarnessWorkspace>[];
+    if (workspaces.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('电脑上还没有工作区:先在 dsh 里打开一个项目目录')),
+      );
+      return;
+    }
+    var cwd = workspaces.first.path;
+    var permission = 'workspace-write';
+    final picked = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('在电脑上新建会话'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: cwd,
+                  decoration: const InputDecoration(labelText: '工作区'),
+                  items: [
+                    for (final workspace in workspaces)
+                      DropdownMenuItem(
+                        value: workspace.path,
+                        child: Text(workspace.title, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setDialogState(() => cwd = value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: permission,
+                  decoration: const InputDecoration(labelText: '权限'),
+                  items: const [
+                    DropdownMenuItem(value: 'workspace-write', child: Text('沙箱内(默认)')),
+                    DropdownMenuItem(value: 'danger-full-access', child: Text('完全访问')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setDialogState(() => permission = value);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('创建')),
+          ],
+        ),
+      ),
+    );
+    if (picked != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final sessionId = await api.harnessCreateSession(cwd: cwd, permission: permission);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => HarnessSessionPage(sessionId: sessionId, title: '新会话'),
+        ),
+      );
+      if (mounted) ref.read(harnessProvider.notifier).load();
+    } on ApiException catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('新建会话失败:${error.message}')));
+    }
   }
 
   Widget _buildComposer(HarnessState state, ThemeData theme) {
