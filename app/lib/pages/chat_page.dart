@@ -107,10 +107,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
       await ref.read(chatProvider.notifier).attachFile(name: picked.name, bytes: bytes);
       if (!mounted) return;
-      // 已经有文字就只附加图片;没有文字时直接发出去,模型会看图回答
-      if (_input.text.trim().isEmpty) {
-        await _send();
-      }
+      // 只附图,不自动发送:给用户补充文字的机会,确认后再点发送
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('照片已添加,可以补充问题后点发送;直接发送也可以')),
+      );
     } on ApiException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
