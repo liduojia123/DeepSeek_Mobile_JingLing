@@ -266,14 +266,17 @@ class ApiClient {
 
   // ---------- OTA(M6+) ----------
 
-  /// 查询服务器发布的最新 App 版本;没发布过返回 null。
+  /// 查询服务器发布的最新 App 版本;服务器还没发布过返回 null(404),其余错误照常抛出。
   Future<AppRelease?> appVersion() async {
     try {
       final json = await _guard(() async =>
           _decode(await _client.get(_uri('/v1/app/version'), headers: _headers())));
       return AppRelease.fromJson(json);
-    } on ApiException {
-      return null;
+    } on ApiException catch (error) {
+      // 404 = 服务器还没放安装包,这是"没有更新"而不是"检查失败";
+      // 其余(401/网络/解析)必须让上层看见,否则会伪装成"已是最新版本"。
+      if (error.statusCode == 404) return null;
+      rethrow;
     }
   }
 

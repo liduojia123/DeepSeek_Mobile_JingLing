@@ -33,6 +33,31 @@ class UpdateInfo {
   final String downloadUrl;
 }
 
+/// 检查更新的结果。以前这里返回 `UpdateInfo?`,把"出错"和"已是最新"混成同一个 null,
+/// 于是任何网络/401/404 都被显示成「已是最新版本」——现在把失败原因显式带出来。
+sealed class UpdateCheck {
+  const UpdateCheck();
+}
+
+final class UpdateAvailable extends UpdateCheck {
+  const UpdateAvailable(this.info);
+
+  final UpdateInfo info;
+}
+
+final class UpdateUpToDate extends UpdateCheck {
+  const UpdateUpToDate({required this.currentVersion, required this.currentCode});
+
+  final String currentVersion;
+  final int currentCode;
+}
+
+final class UpdateCheckFailed extends UpdateCheck {
+  const UpdateCheckFailed(this.message);
+
+  final String message;
+}
+
 /// M6+ OTA:检查更新 → 下载 APK → 交给系统安装器(免插线升级)。
 class UpdateService {
   static const MethodChannel _channel = MethodChannel('jingling/installer');
@@ -54,30 +79,79 @@ class UpdateService {
     await const SecureStore().writeUpdateSource(source == UpdateSource.github ? 'github' : 'server');
   }
 
-  /// 按来源查询是否有新版本;没有则返回 null。
-  static Future<UpdateInfo?> check(ApiClient api, UpdateSource source) async {
-    final current = await currentVersion();
-    if (source == UpdateSource.server) {
-      final latest = await api.appVersion();
-      if (latest == null) return null;
-      if (latest.versionCode <= current.code) return null;
-      return UpdateInfo(
-        source: UpdateSource.server,
-        versionName: latest.versionName,
-        versionCode: latest.versionCode,
-        notes: latest.notes,
-        size: latest.size,
-        downloadUrl: latest.downloadPath,
-      );
+  /// 按来源查询是否有新版本。不抛异常:失败以 [UpdateCheckFailed] 返回,便于 UI 说明原因。
+  /// [current] 只用于测试注入当前版本。
+  static Future<UpdateCheck> check(
+    ApiClient api,
+    UpdateSource source, {
+    ({int code, String name})? current,
+  }) async {
+    final ({int code, String name}) installed;
+    if (current != null) {
+      installed = current;
+    } else {
+      try {
+        installed = await currentVersion();
+      } catch (error) {
+        // 读不到本机版本时不能猜:猜 0 会永远提示"有新版本",猜最新会永远"已是最新"
+        return UpdateCheckFailed('读不到本机版本号:$error');
+      }
     }
-    return _checkGithub(current.name);
+    if (source == UpdateSource.server) {
+      try {
+        final latest = await api.appVersion();
+        if (latest == null) {
+          return const UpdateCheckFailed('服务器还没有发布安装包(release.json / jingling.apk 缺失)');
+        }
+        if (latest.versionCode <= installed.code) {
+          return UpdateUpToDate(currentVersion: installed.name, currentCode: installed.code);
+        }
+        return UpdateAvailable(UpdateInfo(
+          source: UpdateSource.server,
+          versionName: latest.versionName,
+          versionCode: latest.versionCode,
+          notes: latest.notes,
+          size: latest.size,
+          downloadUrl: latest.downloadPath,
+        ));
+      } on ApiException catch (error) {
+        return UpdateCheckFailed('查询服务器失败:${error.message}');
+      } catch (error) {
+        return UpdateCheckFailed('查询服务器失败:$error');
+      }
+    }
+    try {
+      final info = await _checkGithub(installed.name);
+      if (info == null) {
+        return UpdateUpToDate(currentVersion: installed.name, currentCode: installed.code);
+      }
+      return UpdateAvailable(info);
+    } on ApiException catch (error) {
+      return UpdateCheckFailed(error.message);
+    } catch (error) {
+      return UpdateCheckFailed('GitHub 查询失败:$error');
+    }
   }
 
   static Future<UpdateInfo?> _checkGithub(String currentName) async {
-    final response = await http.get(
-      Uri.parse('https://api.github.com/repos/$_githubRepo/releases/latest'),
-      headers: const {'Accept': 'application/vnd.github+json'},
-    );
+    final http.Response response;
+    try {
+      response = await http
+          .get(
+            Uri.parse('https://api.github.com/repos/$_githubRepo/releases/latest'),
+            headers: const {'Accept': 'application/vnd.github+json'},
+          )
+          .timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      throw ApiException('GitHub 查询超时(网络可能不通,可改用「自己的服务器」来源)');
+    } on SocketException catch (error) {
+      throw ApiException('GitHub 连不上:${error.message}');
+    } on http.ClientException catch (error) {
+      throw ApiException('GitHub 连不上:${error.message}');
+    }
+    if (response.statusCode == 403) {
+      throw ApiException('GitHub 接口限流(403),等一会儿再试,或改用「自己的服务器」来源');
+    }
     if (response.statusCode != 200) {
       throw ApiException('GitHub 查询失败(HTTP ${response.statusCode})');
     }
@@ -95,7 +169,9 @@ class UpdateService {
         break;
       }
     }
-    if (apk == null) return null;
+    if (apk == null) {
+      throw ApiException('GitHub 最新发布里没有 APK 资产');
+    }
     return UpdateInfo(
       source: UpdateSource.github,
       versionName: versionName,

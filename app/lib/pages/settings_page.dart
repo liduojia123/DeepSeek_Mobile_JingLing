@@ -32,6 +32,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       });
       UpdateService.currentVersion().then((version) {
         if (mounted) setState(() => _versionLabel = 'v${version.name}+${version.code}');
+      }).catchError((Object error) {
+        // 读不到版本时设置页仍要能用,只是标签显示未知
+        if (mounted) setState(() => _versionLabel = '未知版本($error)');
       });
     });
   }
@@ -51,30 +54,88 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
 
+  String get _sourceLabel => _updateSource == UpdateSource.github ? 'GitHub Releases' : '自己的服务器';
+
   Future<void> _checkUpdate() async {
     final api = ref.read(apiProvider);
-    if (api == null) return;
-    final messenger = ScaffoldMessenger.of(context);
-    final latest = await UpdateService.check(api, _updateSource);
-    if (!mounted) return;
-    if (latest == null) {
-      messenger.showSnackBar(const SnackBar(content: Text('已是最新版本')));
+    if (api == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('还没有配对:配对之后才能检查更新')),
+      );
       return;
     }
-    final sizeMb = (latest.size / 1024 / 1024).toStringAsFixed(1);
+    final messenger = ScaffoldMessenger.of(context);
+    // 先告诉用户"正在查",避免点了没反应
+    messenger.showSnackBar(const SnackBar(content: Text('正在检查更新…'), duration: Duration(seconds: 1)));
+    UpdateCheck result;
+    try {
+      result = await UpdateService.check(api, _updateSource);
+    } catch (error) {
+      // 兜底:任何没预料到的异常也要让用户看到原因,而不是"点了没反应"
+      result = UpdateCheckFailed('检查更新出错:$error');
+    }
+    if (!mounted) return;
+
+    UpdateInfo? latest;
+    if (result is UpdateCheckFailed) {
+      final failure = result;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('检查更新失败'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(failure.message),
+              const SizedBox(height: 10),
+              Text(
+                '来源:$_sourceLabel\n当前版本:${_versionLabel.isEmpty ? '未知' : _versionLabel}',
+                style: const TextStyle(fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '可先用另一来源再试:设置 → 更新来源。',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('知道了')),
+          ],
+        ),
+      );
+      return;
+    }
+    if (result is UpdateUpToDate) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('已是最新版本 v${result.currentVersion}(${result.currentCode})· 来源:$_sourceLabel'),
+        ),
+      );
+      return;
+    }
+    if (result is UpdateAvailable) {
+      latest = result.info;
+    }
+    if (latest == null) return;
+    final info = latest;
+
+    final sizeMb = (info.size / 1024 / 1024).toStringAsFixed(1);
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('发现新版本 v${latest.versionName}'),
+        title: Text('发现新版本 v${info.versionName}'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('大小:$sizeMb MB'),
-              if (latest.notes.trim().isNotEmpty) ...[
+              if (info.notes.trim().isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text(latest.notes.trim()),
+                Text(info.notes.trim()),
               ],
               const SizedBox(height: 8),
               const Text('下载后点安装即可升级,不需要连电脑。', style: TextStyle(fontSize: 12)),
