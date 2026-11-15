@@ -345,3 +345,5 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | 连续语音 | 手机输入法自带 STT,按条语音输入价值低 → 改为连续语音模式(免按住、自动断句、自动播报、可手动打断);VAD 用录音音量阈值,未做回声消除式自动 barge-in |
 
 | 2026-11-15 | 语音交互形态(最终) | 不做按条「语音转文字」(输入法已具备);语音以**聊天页内联**方式提供:输入框左侧麦克风开启/退出连续语音模式,状态条只占一行,不遮挡对话与回答;以此替代全屏语音层 |
+
+| 2026-11-15 | 拍照提问(G3 提前) | 聊天页输入框新增相机按钮:`image_picker` 拍照 → `POST /v1/files` 解析 → 有文字就附加,没文字直接把图片当问题发送(服务端放宽「content 不能为空」为「content 或 file_ids 至少一个」)。坑:`image_picker_android` 的 lint 与 AGP/JDK 组合会崩 → release 关闭 `lintVital`(不影响 flutter analyze) |

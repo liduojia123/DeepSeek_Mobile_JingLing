@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -89,6 +90,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
+  /// 拍照提问:拍一张 → 上传解析 → 没输入文字就直接作为「图片问题」发送。
+  Future<void> _takePhoto() async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+        maxWidth: 2200,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (bytes.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('照片内容为空,再拍一张？')));
+        return;
+      }
+      await ref.read(chatProvider.notifier).attachFile(name: picked.name, bytes: bytes);
+      if (!mounted) return;
+      // 已经有文字就只附加图片;没有文字时直接发出去,模型会看图回答
+      if (_input.text.trim().isEmpty) {
+        await _send();
+      }
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('拍照失败:$error')));
+    }
+  }
   Future<void> _pickFile() async {
     try {
       final file = await FilePicker.pickFile(
@@ -453,6 +483,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     voice.active ? Icons.mic : Icons.mic_none,
                     color: voice.active ? theme.colorScheme.error : null,
                   ),
+                ),
+                IconButton(
+                  tooltip: '拍照提问',
+                  onPressed: chat.generating ? null : _takePhoto,
+                  icon: const Icon(Icons.photo_camera_outlined),
                 ),
                 IconButton(
                   tooltip: '添加文件',

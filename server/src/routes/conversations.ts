@@ -283,7 +283,11 @@ export function registerConversationRoutes(
       }
     } else {
       userContent = body.content?.trim() ?? '';
-      if (userContent === '') throw new ApiError(400, 'validation_error', 'content 不能为空');
+      // 拍照提问:允许只发图片不写字(content 为空但带文件)
+      const attachedCount = body.file_ids?.length ?? 0;
+      if (userContent === '' && attachedCount === 0) {
+        throw new ApiError(400, 'validation_error', 'content 不能为空');
+      }
       if (userContent.length > config.maxContentChars) {
         throw new ApiError(413, 'content_too_long', `消息长度超过 ${config.maxContentChars} 字符上限`);
       }

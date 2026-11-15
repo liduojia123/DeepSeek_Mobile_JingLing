@@ -61,3 +61,11 @@
 - 打断:播报中点「打断」按钮 → 立即停播并回到聆听(受手机回声消除限制,未做"被声音自动打断")
 - 与聊天页自动朗读互斥:语音模式激活时不再重复播报
 - 版本:1.0.4+5,已通过 OTA 发布到生产
+
+## 9. 拍照提问(2026-11-15)
+
+- 输入框左侧新增相机按钮;拍照后走文件解析管道(与 PDF/Office 相同),图片进上下文
+- 没输入文字时直接发送图片作为问题;有文字则先附加,等用户一起发
+- 服务端:允许 `content` 为空但带 `file_ids`(之前强制非空)
+- 坑:`image_picker_android` 的 `lintVitalAnalyzeRelease` 在 AGP 8.x + JDK 17 下会 `NoSuchMethodError` 崩溃 → `android { lint { checkReleaseBuilds = false } }`
+- 版本 1.0.5+6,已 OTA 发布

@@ -47,6 +47,13 @@ android {
         }
     }
 
+    // image_picker 的 lint 分析在部分 AGP/JDK 组合下会崩(lint 工具自身 bug),
+    // 关闭 release 的 lintVital,不影响 flutter analyze 与运行时
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
