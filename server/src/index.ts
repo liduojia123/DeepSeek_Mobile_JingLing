@@ -7,6 +7,7 @@ import { openDb, purgeEphemeral, type Db } from './db.js';
 import { registerConversationRoutes, GenerationRegistry } from './routes/conversations.js';
 import { registerFileRoutes } from './routes/files.js';
 import { HarnessHub, registerHarnessBridge, registerHarnessRoutes } from './routes/harness.js';
+import { registerMemoryRoutes } from './routes/memory.js';
 import { registerUsageRoutes } from './routes/usage.js';
 import { registerVoiceRoutes } from './routes/voice.js';
 
@@ -82,6 +83,7 @@ export function buildApp(
     registerUsageRoutes(secured, ctx);
     await registerFileRoutes(secured, ctx);
     await registerVoiceRoutes(secured, { config, db, mock: config.mock });
+    registerMemoryRoutes(secured, { db });
     registerHarnessRoutes(secured, harnessHub, config);
   });
 

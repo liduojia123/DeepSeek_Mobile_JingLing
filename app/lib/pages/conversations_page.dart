@@ -6,6 +6,7 @@ import '../core/providers.dart';
 import '../models/models.dart';
 import 'chat_page.dart';
 import 'computer_page.dart';
+import 'memory_page.dart';
 import 'settings_page.dart';
 
 class ConversationsPage extends ConsumerWidget {
@@ -122,6 +123,13 @@ class ConversationsPage extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('鲸灵'),
         actions: [
+          IconButton(
+            tooltip: '记忆',
+            icon: const Icon(Icons.psychology_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const MemoryPage()),
+            ),
+          ),
           IconButton(
             tooltip: '电脑',
             icon: const Icon(Icons.desktop_windows_outlined),

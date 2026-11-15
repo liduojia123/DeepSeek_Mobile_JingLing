@@ -242,6 +242,23 @@ class ApiClient {
     return UsageSummary.fromJson(json);
   }
 
+  // ---------- 记忆(M5) ----------
+
+  Future<List<MemoryNote>> memories({String? query, int limit = 100}) async {
+    final json = await _guard(() async => _decode(await _client.get(
+          _uri('/v1/memories', {'limit': '$limit', if (query != null && query.trim().isNotEmpty) 'query': query.trim()}),
+          headers: _headers(),
+        )));
+    return ((json['items'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((item) => MemoryNote.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
+
+  Future<void> deleteMemory(String id) async {
+    final response = await _guard(() => _client.delete(_uri('/v1/memories/$id'), headers: _headers()));
+    _decode(response);
+  }
   // ---------- 语音(M4) ----------
 
   /// 上传 16kHz WAV → 识别文本。

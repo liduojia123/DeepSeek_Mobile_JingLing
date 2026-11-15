@@ -1162,3 +1162,25 @@ test('M5 http_request:白名单外拒绝,白名单内真实调用', async () => 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+test('M5 记忆管理接口:列表/搜索/删除', async () => {
+  const { app, db } = makeHarness();
+  const headers = auth(await pair(app));
+  db.prepare(
+    "INSERT INTO memory_note (id, content, tags, created_at, updated_at) VALUES ('m1', '用户喜欢美式咖啡', '[\"偏好\"]', ?, ?)",
+  ).run(new Date().toISOString(), new Date().toISOString());
+
+  const list = await app.inject({ method: 'GET', url: '/v1/memories', headers });
+  assert.equal(list.statusCode, 200);
+  const listBody = list.json() as { total: number; items: Array<{ id: string; content: string; tags: string[] }> };
+  assert.equal(listBody.total, 1);
+  assert.match(listBody.items[0]!.content, /美式/);
+  assert.deepEqual(listBody.items[0]!.tags, ['偏好']);
+
+  const search = await app.inject({ method: 'GET', url: '/v1/memories?query=美式', headers });
+  assert.equal((search.json() as { total: number }).total, 1);
+
+  const removed = await app.inject({ method: 'DELETE', url: '/v1/memories/m1', headers });
+  assert.equal(removed.statusCode, 200);
+  const after = await app.inject({ method: 'GET', url: '/v1/memories', headers });
+  assert.equal((after.json() as { total: number }).total, 0);
+});

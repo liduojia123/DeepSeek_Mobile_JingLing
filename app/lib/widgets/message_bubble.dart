@@ -239,6 +239,9 @@ class _ToolTraceCardState extends State<ToolTraceCard> {
     final trace = widget.trace;
     final icon = switch (trace.tool) {
       'deepseek_read_url' => Icons.link,
+      'memory_save' => Icons.psychology,
+      'memory_search' || 'memory_list' => Icons.manage_search,
+      'http_request' => Icons.http,
       _ => Icons.travel_explore,
     };
     final expandable = trace.results.isNotEmpty;

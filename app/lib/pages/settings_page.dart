@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/providers.dart';
+import 'computer_page.dart';
+import 'memory_page.dart';
 import 'usage_page.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -71,6 +73,43 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Text('功能', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.psychology_outlined),
+            title: const Text('记忆'),
+            subtitle: const Text('查看、搜索、删除鲸灵记住的关于你的信息'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const MemoryPage()),
+            ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.insights_outlined),
+            title: const Text('用量看板'),
+            subtitle: const Text('今日费用与预算、近 7 天趋势、工具调用、Top 会话'),
+            onTap: _showUsage,
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.desktop_windows_outlined),
+            title: const Text('电脑(dsh 远程开发)'),
+            subtitle: const Text('查看电脑上的 dsh 工作区/会话、派任务、逐条确认'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const ComputerPage()),
+            ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.record_voice_over_outlined),
+            title: const Text('语音'),
+            subtitle: const Text('聊天页麦克风:按住说话/点按录音;自动朗读在聊天页右上角切换'),
+            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('打开任一会话,使用输入框左侧麦克风;朗读开关在会话右上角')),
+            ),
+          ),
+          const Divider(height: 32),
           Text('服务器', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           TextField(
@@ -92,13 +131,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ),
           ),
           const Divider(height: 32),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.insights_outlined),
-            title: const Text('用量与费用'),
-            subtitle: const Text('token 用量、调用次数与估算费用'),
-            onTap: _showUsage,
-          ),
+
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.link_off, color: theme.colorScheme.error),

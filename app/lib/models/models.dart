@@ -453,3 +453,25 @@ class StreamingAnswer {
 
   bool get hasContent => thinking.trim().isNotEmpty || text.trim().isNotEmpty;
 }
+
+/// M5 记忆:memory 工具沉淀的一条个人记忆。
+class MemoryNote {
+  const MemoryNote({
+    required this.id,
+    required this.content,
+    required this.tags,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String content;
+  final List<String> tags;
+  final String updatedAt;
+
+  factory MemoryNote.fromJson(Map<String, dynamic> json) => MemoryNote(
+        id: (json['id'] as String?) ?? '',
+        content: (json['content'] as String?) ?? '',
+        tags: ((json['tags'] as List?) ?? const []).whereType<String>().toList(growable: false),
+        updatedAt: (json['updated_at'] as String?) ?? '',
+      );
+}
