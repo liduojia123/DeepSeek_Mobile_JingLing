@@ -65,25 +65,43 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
       _scrollToBottom();
     });
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('电脑'),
-        actions: [
-          IconButton(
-            tooltip: '刷新',
-            onPressed: () => ref.read(harnessProvider.notifier).load(),
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildNodeBar(state, theme),
-          Expanded(child: _buildBody(state, theme)),
-          _buildConfirmCard(state, theme),
-          _buildPermissionBar(state, theme),
-          _buildComposer(state, theme),
-        ],
+    // 任务视图下,系统返回键先回到会话列表,而不是直接退出电脑页
+    return PopScope(
+      canPop: !state.viewingTask,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && state.viewingTask) ref.read(harnessProvider.notifier).showList();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: state.viewingTask
+              ? IconButton(
+                  tooltip: '会话列表',
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => ref.read(harnessProvider.notifier).showList(),
+                )
+              : null,
+          title: const Text('电脑'),
+          actions: [
+            IconButton(
+              tooltip: '刷新',
+              onPressed: () => ref.read(harnessProvider.notifier).load(),
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            _buildNodeBar(state, theme),
+            Expanded(
+              child: state.viewingTask ? _buildTaskView(state, theme) : _buildBody(state, theme),
+            ),
+            _buildConfirmCard(state, theme),
+            if (state.viewingTask) ...[
+              _buildPermissionBar(state, theme),
+              _buildComposer(state, theme),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -120,21 +138,26 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
   Widget _buildBody(HarnessState state, ThemeData theme) {
     if (state.loading) return const Center(child: CircularProgressIndicator());
 
-    if (state.running || state.output.isNotEmpty || state.thinking.isNotEmpty) {
-      return _buildTaskView(state, theme);
-    }
 
+    final banner = state.taskId == null ? const SizedBox.shrink() : _buildTaskBanner(state, theme);
     final snapshot = state.snapshot;
     if (snapshot == null || snapshot.sessions.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            '电脑上没有可用的 dsh 会话。\n先在电脑上打开一个会话,再回来刷新。',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      return Column(
+        children: [
+          banner,
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  '电脑上没有可用的 dsh 会话。\n先在电脑上打开一个会话,再回来刷新。',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       );
     }
 
@@ -144,9 +167,13 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
     };
     final ungrouped =
         snapshot.sessions.where((session) => !groupedIds.contains(session.id)).toList(growable: false);
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+    return Column(
       children: [
+        banner,
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            children: [
         for (final workspace in snapshot.workspaces)
           ExpansionTile(
             leading: const Icon(Icons.folder_outlined),
@@ -170,7 +197,42 @@ class _ComputerPageState extends ConsumerState<ComputerPage> {
                 _sessionTile(session, session.id == selectedId),
             ],
           ),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  /// 列表顶部的「任务进行中」横幅:点击回到任务视图(任务不会因为返回列表而中断)。
+  Widget _buildTaskBanner(HarnessState state, ThemeData theme) {
+    final running = state.running;
+    return Material(
+      color: running
+          ? theme.colorScheme.primaryContainer.withValues(alpha: 0.5)
+          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      child: InkWell(
+        onTap: () => ref.read(harnessProvider.notifier).openTask(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              if (running)
+                const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              else
+                Icon(Icons.check_circle_outline, size: 16, color: theme.colorScheme.outline),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  running ? '电脑正在执行任务…点击查看' : '上一个任务已结束 · 点击查看',
+                  style: theme.textTheme.labelMedium,
+                ),
+              ),
+              Text('查看', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

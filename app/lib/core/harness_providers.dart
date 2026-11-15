@@ -23,6 +23,7 @@ class HarnessState {
     this.confirm,
     this.confirmRemaining = 0,
     this.permissionMode = 'workspace-write',
+    this.viewingTask = false,
   });
 
   final bool loading;
@@ -39,6 +40,8 @@ class HarnessState {
   final int confirmRemaining;
   /// 远程会话的沙箱权限模式:workspace-write(默认)或 danger-full-access。
   final String permissionMode;
+  /// 当前是否在「任务视图」;false 表示在会话列表视图(可切换会话)。
+  final bool viewingTask;
 
   bool get running => status == 'running';
   HarnessNode? get onlineNode {
@@ -71,6 +74,7 @@ class HarnessState {
     Object? confirm = _unset,
     int? confirmRemaining,
     String? permissionMode,
+    bool? viewingTask,
   }) =>
       HarnessState(
         loading: loading ?? this.loading,
@@ -88,6 +92,7 @@ class HarnessState {
         confirm: identical(confirm, _unset) ? this.confirm : confirm as HarnessConfirmRequest?,
         confirmRemaining: confirmRemaining ?? this.confirmRemaining,
         permissionMode: permissionMode ?? this.permissionMode,
+        viewingTask: viewingTask ?? this.viewingTask,
       );
 }
 
@@ -132,6 +137,14 @@ class HarnessController extends Notifier<HarnessState> {
     }
   }
 
+  /// 回到会话列表(任务继续在电脑上跑,确认卡片仍会弹出)。
+  void showList() => state = state.copyWith(viewingTask: false);
+
+  /// 从列表回到当前任务视图。
+  void openTask() {
+    if (state.taskId != null) state = state.copyWith(viewingTask: true);
+  }
+
   void setPermissionMode(String mode) => state = state.copyWith(permissionMode: mode);
 
   void selectSession(String sessionId) {
@@ -145,6 +158,7 @@ class HarnessController extends Notifier<HarnessState> {
 
     state = state.copyWith(
       status: 'running',
+      viewingTask: true,
       thinking: '',
       output: '',
       toolEvents: const [],
