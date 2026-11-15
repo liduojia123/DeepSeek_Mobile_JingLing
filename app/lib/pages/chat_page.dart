@@ -90,39 +90,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  /// 图片入口:拍照 或 从相册选择(可多选)。
-  Future<void> _pickPhoto() async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('拍照'),
-              subtitle: const Text('拍一张,附到当前消息'),
-              onTap: () => Navigator.pop(sheetContext, 'camera'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('从相册选择'),
-              subtitle: const Text('最多 6 张,可多选'),
-              onTap: () => Navigator.pop(sheetContext, 'gallery'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted || action == null) return;
-    if (action == 'camera') {
-      await _takePhoto();
-    } else {
-      await _pickFromGallery();
-    }
-  }
-
   /// 从相册多选图片 → 逐张上传解析 → 附加到当前消息。
   Future<void> _pickFromGallery() async {
     try {
@@ -547,12 +514,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ),
                 ),
                 IconButton(
-                  tooltip: '图片(拍照/相册)',
-                  onPressed: chat.generating ? null : _pickPhoto,
-                  icon: const Icon(Icons.add_photo_alternate_outlined),
+                  tooltip: '拍照',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: chat.generating ? null : _takePhoto,
+                  icon: const Icon(Icons.photo_camera_outlined),
+                ),
+                IconButton(
+                  tooltip: '相册',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: chat.generating ? null : _pickFromGallery,
+                  icon: const Icon(Icons.photo_library_outlined),
                 ),
                 IconButton(
                   tooltip: '添加文件',
+                  visualDensity: VisualDensity.compact,
                   onPressed: chat.generating ? null : _pickFile,
                   icon: const Icon(Icons.attach_file),
                 ),
