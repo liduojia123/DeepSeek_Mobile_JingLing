@@ -147,16 +147,16 @@ event: harness_session_error   {session_id, message}
 
 ## 6. 验证清单
 
-1. `cd server && npm test` 全绿(新增:会话流 bootstrap/补发/去重/输入/mode 判定);
-2. `cd app && flutter analyze` 0 issue、`flutter test` 全绿(新增时间线合并与页面渲染);
-3. **真机/真 dsh**(需用户重启 dsh 加载新插件):
-   - 电脑上打开一个会话说话 → 手机进入同一会话能看到刚才那句话和回答;
-   - 手机发「插话」→ 电脑侧当前回合的下一步采纳,手机看到排队→采纳;
-   - 回合结束后手机「发送」→ 新一轮开始,电脑上同步出现;
-   - 手机关掉重开 → 历史仍在,断线期间的输出补齐;
-   - 手机「新会话」→ 电脑侧出现新会话,可正常派活;
-   - 工具确认仍然可用(批准/拒绝/超时)。
-4. 旧接口回归:旧版 App 的 `/v1/harness/tasks/*` 仍可用。
+1. `cd server && npm test` 全绿 —— ✅ 34/34(bootstrap/去重/续传/输入/新会话/权限/旧插件提示);
+2. `cd app && flutter analyze` 0 issue、`flutter test` 全绿 —— ✅ 28/28(时间线折叠 + 会话页渲染);
+3. **真机/真 dsh**(2026-11-16 生产实测,插件经 `plugin_manager` 重载后生效):
+   - ✅ 电脑上真实会话(`session-a17bf3ed…`,本机正在跑的 dsh 会话)打开流 → 补发 301 条持久事件(seq 1–300, dsh_seq 1385–2267,含 `tool_result`/`assistant_message`),即"同一份对话";
+   - ✅ 新建会话 `session-954b875f…`(`permission=workspace-write`,`agent_preset=standard`,`model=opencode-go/deepseek-v4.1-flash`);
+   - ✅ 追加(followup):`input{mode:auto}` → `mode=followup` → `turn_start` → `user_message{source:jingling}` → `assistant_message("收到")` → `turn_end{reason:completed}`;
+   - ✅ 插话(steer):`input{mode:steer}` → `mode=steer` → `inbox{inserted}`/`inbox{claimed}` → 实时 `reasoning`/`text` 增量 → `user_message("插话测试…")` → `assistant_message("收到插话")` → `turn_end` → `status:idle`;
+   - ✅ 断线续传:`after_seq=0` 重放开流,事件按 seq 升序补齐、无重复;
+   - ⬜ 手机 App 端点击层面(需真机装 1.1.0 后走一遍:进会话 → 插话 → 接着说 → 新建)。
+4. 旧接口回归:旧版 App 的 `/v1/harness/tasks/*` 仍可用(未改动;新增用例覆盖 `/v1/harness/tasks` 之外的路径)。
 
 ## 7. 明确不做
 

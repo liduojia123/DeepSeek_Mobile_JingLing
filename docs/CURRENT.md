@@ -68,5 +68,6 @@
 - 真实 API 已验证:搜索/引用、文件解析、ASR/TTS、memory 保存与命中、预算熔断、dsh 桥接(枚举/派任务/审批/权限)
 - 2026-11-15 真实 key 复验:输出侧拒答两例均被识别(`safety_block source=output` / `stop_reason=refusal` / `message.safety_json` 落库),正常代码问答未被误标
 - 2026-11-15 生产已升级 v1.0.10:服务器重新构建部署(`/v1/devices` 实测返回设备列表)、OTA 清单 `version_code=11` 与 APK 同尺寸(19298557)、GitHub Release 资产已上传
-- 2026-11-16 v1.1.0:会话级桥接已完成代码与自动化测试(server 33/33、app 28/28);**dsh 插件侧需重启电脑上的 dsh 才会加载新代码**,之后按 `docs/HANDOFF-M3.5.md` §6 逐条验收
+- 2026-11-16 v1.1.0:会话级桥接已完成代码与自动化测试(server 34/34、app 28/28);**已在生产 + 本机真实 dsh 上端到端验证**:真实电脑会话补发 301 条历史、新建会话、followup("收到")、steer("收到插话")、断线按 seq 重放。插件通过 `plugin_manager` 禁用→启用即加载新代码(不必重启整个 dsh)
+- 2026-11-16 副作用提醒:重载插件时 dsh 会重新 apply 整个 profile,`dsh-pet` 因缺 `@electron/get` 没能重新激活(`fiberPhase=null`,`enabled=true`)。与鲸灵无关,修复方式:在 `C:\Users\liduo\.dsh\profiles\desktop` 里 `npm i @electron/get` 后再次启用 dsh-pet(或忽略,只是桌面宠物)
 
