@@ -1,6 +1,7 @@
 # 鲸灵 JingLing
 
 > 当前进度与交接见 [docs/CURRENT.md](docs/CURRENT.md);设计以 [docs/DESIGN.md](docs/DESIGN.md) 为准。
+> **部署到自己的服务器(换机器 / 别人 / 给 AI 执行)见 [docs/DEPLOY-FROM-SCRATCH.md](docs/DEPLOY-FROM-SCRATCH.md)。**
 
 手机 APK 瘦客户端 + 自有服务器上的 Agent 大脑(DeepSeek 全家桶 API)+ dsh 远程开发桥(插件)。
 个人自用、专业级标准。产品设计见 [`docs/DESIGN.md`](docs/DESIGN.md)(权威),施工单见 `docs/HANDOFF-*.md`。

@@ -1,5 +1,8 @@
 # 生产部署手册(鲸灵后端)
 
+> **本文是这一台生产机的运维记录**(固定域名/端口、Caddy 特例、备份与 OTA 实操)。
+> 换机器、给别人部署、或让 AI 执行时,走通用文档 **[DEPLOY-FROM-SCRATCH.md](DEPLOY-FROM-SCRATCH.md)**。
+
 > 服务器:腾讯云 Ubuntu 24.04(4C/3.6G),路径 `/opt/jingling`。
 > 登录凭据放**仓库外**(仓库根的 `生产环境.md` 已被 gitignore,但更建议移出仓库)。
 > 同一台机器还跑着 spendlens;两者共用 Caddy,鲸灵只占 `127.0.0.1:3001`。
