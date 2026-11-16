@@ -73,9 +73,11 @@ App 里服务器地址保持 `http://127.0.0.1:3000`,输入服务端控制台的
 ### 测试与检查
 
 ```bash
-cd server && npm test && npm run typecheck
-cd app && flutter analyze && flutter test
+cd server && npm ci && npm run typecheck && npm test
+cd app && flutter pub get && flutter analyze && flutter test
 ```
+
+同样两条链(先装依赖再跑)就是发布前必须过的检查;`npm ci` 一步能同时验证 lockfile 是否可用。
 
 ## 关键约定
 
@@ -108,7 +110,7 @@ cd app && flutter analyze && flutter test
 | M5 工具与用量 | ✅ 完成(memory / http_request、每日预算熔断、用量页) |
 | M6 打包发布 | ✅ 完成(release 18.3MB、应用内 OTA、服务器备份与健康检查) |
 
-测试规模:server `npm test` 27 项、app `flutter test` 11 项。
+测试规模:server `npm test` 34 项、app `flutter test` 37 项(以 CI 徽章为准,数字随版本变)。
 
 ## 许可
 
