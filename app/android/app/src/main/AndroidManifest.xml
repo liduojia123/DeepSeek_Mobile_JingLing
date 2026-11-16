@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- M6+ OTA:允许应用内触发 APK 安装 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- M3.6 等待期通知:前台服务(保活 SSE + 常驻通知)+ Android 13 通知权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 拍照提问:相机不是必需硬件(平板/无相机也能装) -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application
@@ -47,6 +51,11 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- M3.6:等待电脑结果期间的前台服务(结束即停,不常驻) -->
+        <service
+            android:name=".WaitService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

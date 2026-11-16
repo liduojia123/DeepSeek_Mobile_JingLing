@@ -1,9 +1,16 @@
 package com.jingling.jingling
 
+import android.Manifest
+import android.app.NotificationManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -11,15 +18,17 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 /**
- * M6+ OTA:把下载好的 APK 交给系统安装器。
- * Flutter 侧调用 `installApk(path)`,先确保「安装未知应用」权限已授予。
+ * 原生能力入口:
+ *  - `jingling/installer`:M6+ OTA 把 APK 交给系统安装器;
+ *  - `jingling/wait`:M3.6 等待期前台服务 + 结果通知。
  */
 class MainActivity : FlutterActivity() {
-    private val channelName = "jingling/installer"
+    private val installerChannel = "jingling/installer"
+    private val waitChannel = "jingling/wait"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, installerChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "canInstall" -> result.success(canRequestInstall())
@@ -43,7 +52,113 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, waitChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        val title = call.argument<String>("title") ?: "鲸灵"
+                        val text = call.argument<String>("text") ?: "正在等电脑上的结果…"
+                        if (!canNotify()) {
+                            // 没有通知权限:前台服务启动后通知不可见,不如不启动,避免用户困惑
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        WaitService.start(applicationContext, title, text)
+                        result.success(true)
+                    }
+                    "update" -> {
+                        val title = call.argument<String>("title") ?: "鲸灵"
+                        val text = call.argument<String>("text") ?: "正在等电脑上的结果…"
+                        WaitService.update(applicationContext, title, text)
+                        result.success(true)
+                    }
+                    "stop" -> {
+                        WaitService.stop(applicationContext)
+                        result.success(true)
+                    }
+                    "notifyResult" -> {
+                        val title = call.argument<String>("title") ?: "鲸灵"
+                        val text = call.argument<String>("text") ?: ""
+                        if (canNotify()) {
+                            postResultNotification(title, text)
+                        }
+                        result.success(true)
+                    }
+                    "canNotify" -> result.success(canNotify())
+                    "requestPermission" -> {
+                        result.success(requestNotificationPermission())
+                    }
+                    "openNotificationSettings" -> {
+                        openNotificationSettings()
+                        result.success(true)
+                    }
+                    "isIgnoringBatteryOptimizations" -> {
+                        result.success(isIgnoringBatteryOptimizations())
+                    }
+                    else -> result.notImplemented()
+                }
+            }
     }
+
+    // ---------- 通知权限 ----------
+
+    private fun canNotify(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        }
+        return NotificationManagerCompat.from(this).areNotificationsEnabled()
+    }
+
+    /** Android 13+ 需要运行时权限;更早版本只需要渠道未被关闭。 */
+    private fun requestNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !canNotify()) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+            return false
+        }
+        return canNotify()
+    }
+
+    private fun postResultNotification(title: String, text: String) {
+        WaitService.ensureChannels(this)
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pending = android.app.PendingIntent.getActivity(
+            this,
+            0,
+            openIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(this, WaitService.CHANNEL_RESULT)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pending)
+            .build()
+        NotificationManagerCompat.from(this).notify(WaitService.NOTIFICATION_ID_RESULT, notification)
+    }
+
+    private fun openNotificationSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val power = getSystemService(PowerManager::class.java) ?: return true
+        return power.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    // ---------- OTA 安装 ----------
 
     private fun canRequestInstall(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
@@ -68,5 +183,9 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
+    }
+
+    companion object {
+        private const val REQUEST_NOTIFICATIONS = 4101
     }
 }

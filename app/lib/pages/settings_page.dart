@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/providers.dart';
 import '../core/update.dart';
+import '../core/wait_alert.dart';
 import 'computer_page.dart';
 import 'devices_page.dart';
 import 'memory_page.dart';
@@ -20,6 +21,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   UpdateSource _updateSource = UpdateSource.server;
   final TextEditingController _serverUrl = TextEditingController();
   bool _saving = false;
+  bool _notifyAllowed = true;
 
   @override
   void initState() {
@@ -35,6 +37,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       }).catchError((Object error) {
         // 读不到版本时设置页仍要能用,只是标签显示未知
         if (mounted) setState(() => _versionLabel = '未知版本($error)');
+      });
+      WaitAlert.canNotify().then((allowed) {
+        if (mounted) setState(() => _notifyAllowed = allowed);
       });
     });
   }
@@ -334,6 +339,35 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const DevicesPage()),
             ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              _notifyAllowed ? Icons.notifications_active_outlined : Icons.notifications_off_outlined,
+              color: _notifyAllowed ? null : theme.colorScheme.error,
+            ),
+            title: const Text('等待结果时通知我'),
+            subtitle: Text(
+              _notifyAllowed
+                  ? '已开启:派了任务后锁屏也能收到「跑完了 / 要你确认」'
+                  : '未开启:点这里授权通知,否则任务跑完不会响',
+            ),
+            onTap: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              if (!_notifyAllowed) {
+                await WaitAlert.ensurePermission();
+              }
+              final allowed = await WaitAlert.canNotify();
+              if (!mounted) return;
+              setState(() => _notifyAllowed = allowed);
+              if (!allowed) {
+                await WaitAlert.openNotificationSettings();
+              } else {
+                messenger.showSnackBar(
+                  const SnackBar(content: Text('通知已开启')),
+                );
+              }
+            },
           ),
           const Divider(height: 32),
           Text('服务器', style: theme.textTheme.titleSmall),

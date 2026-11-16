@@ -5,8 +5,8 @@
 
 ## 一、版本与发布
 
-- App 版本:**1.1.1+13**(versionCode=13)
-- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.1.1)
+- App 版本:**1.2.0+14**(versionCode=14)
+- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.2.0)
 - 服务器 OTA:`/opt/jingling/data/app/jingling.apk` + `release.json`(version_code 必须递增)
 - 手机端「设置 → 更新来源」可选 **自己的服务器 / GitHub Releases**;「检查更新」按所选来源比对
 - 发布纪律见 `AGENTS.md`「发布纪律」:改版本号 → 测试 → 构建 → commit/push → `gh release create` → 同步服务器 OTA
@@ -26,21 +26,21 @@
 | v1.0.10 收口 | ✅ 代码块语法高亮(14 种语言+复制)、输出侧拒答标识(`safety_block.source=output`,落库)、设备令牌吊销(设置→设备管理) |
 | v1.1.0 会话级桥接 | ✅ 手机进电脑上同一个 dsh 会话:同一份历史+实时、跑的时候「插话」、结束「接着说」、手机新建会话、断线按 seq 续传 |
 | v1.1.1 检查更新修复 | ✅ 「检查更新」不再静默失败:区分有新版本/已是最新/查询失败,失败弹窗带原因+当前版本+来源;GitHub 侧补超时/限流/无资产原因 |
+| v1.2.0 等待期通知(M3.6) | ✅ 派任务/等会话时通知栏常驻「正在等电脑」;跑完/出错/电脑断线在后台发通知;需要确认的操作也提醒;结束即停服务,不做常驻后台 |
 
 ## 三、下一步候选(按建议顺序)
 
-1. **M3.5 真机验收**(需在电脑上重启 dsh 加载新插件):同一会话双端可见/插话生效/断线补发/新建会话
+1. **v1.2.0 真机验收**:派任务→锁屏→收到「跑完了」;等待中关 dsh→收到「断线了」;前台结束时不该响
 2. **run_code 沙箱**(v1.5):Docker 隔离执行,agent 能跑代码验证
-3. **手机原生提醒**:日历/闹钟/通知推送(让「提醒我」真正可用)
-4. **任务完成/需要审批时推送到手机**(M3.5 之后的痛点:现在只有打开页面才看得到)
-5. **个人知识库 RAG**、网页端、会话全局搜索(v2)
+3. **手机原生提醒**:日历/闹钟/通知(让 agent 的「提醒我」真的响)
+4. **个人知识库 RAG**、网页端、会话全局搜索(v2)
 
 ## 四、关键路径与环境(本机)
 
 - 仓库:`D:\DPAPP`(`server/` `app/` `bridge-dsh/` `docs/` `deploy/`)
 - Flutter:`D:\dev\flutter`;JDK:`D:\dev\jdk-17`;Android SDK:`D:\dev\android-sdk`
 - 构建:`cd app; flutter build apk --release --target-platform android-arm64`
-- 测试:`cd server; npm test`(34 条)/ `cd app; flutter analyze` + `flutter test`(32 条)
+- 测试:`cd server; npm test`(34 条)/ `cd app; flutter analyze` + `flutter test`(37 条)
 - 注意:`server` 的测试入口用 tsx(会 spawn esbuild 服务进程),受限沙箱里会 EPERM,需要正常权限运行
 - 发布签名:`app/android/key.properties` + `jingling-release.jks`(均不入库)
 - **密钥/服务器凭据在仓库外**:`D:\dev\deploy\`(`keystore-info.txt`、设备令牌、发布脚本);生产 `server/.env` 在服务器 `/opt/jingling/.env`
@@ -63,6 +63,8 @@
 13. 会话流有两个序号:服务器 `seq`(手机续传用)和 dsh `dsh_seq`(去重用),混用会出现重复消息
 14. **不要再让「检查更新」返回可空值**:失败与「已是最新」混成 null 会静默失败(v1.1.1 修的就是这个)。新代码用 `UpdateCheck`(available / upToDate / failed),失败必须带原因
 15. 用 sealed class 的 `switch` 给 late final 局部变量赋值会触发 Dart VM linearstack 崩溃(`error: unreachable code`,Gradle 报 `compileFlutterBuildRelease` 失败)→ 改成 `if (x is …)` + 可空局部变量
+16. Android 前台服务:停服务用 `stopService`(后台 `startService` 会被限制);`onDestroy` 里要 `stopForeground` 清通知;14+ 必须声明并传入 `foregroundServiceType`;没有通知权限就别启动(否则得到"看不见的通知")
+17. 国产系统会额外限后台:收不到通知时去「应用信息 → 省电策略」设无限制 + 允许自启动(小米/HyperOS 尤其)
 
 ## 六、验证过的生产事实
 
@@ -72,5 +74,6 @@
 - 2026-11-15 真实 key 复验:输出侧拒答两例均被识别(`safety_block source=output` / `stop_reason=refusal` / `message.safety_json` 落库),正常代码问答未被误标
 - 2026-11-15 生产已升级 v1.0.10:服务器重新构建部署(`/v1/devices` 实测返回设备列表)、OTA 清单 `version_code=11` 与 APK 同尺寸(19298557)、GitHub Release 资产已上传
 - 2026-11-16 v1.1.0:会话级桥接已完成代码与自动化测试(server 34/34、app 28/28);**已在生产 + 本机真实 dsh 上端到端验证**:真实电脑会话补发 301 条历史、新建会话、followup("收到")、steer("收到插话")、断线按 seq 重放。插件通过 `plugin_manager` 禁用→启用即加载新代码(不必重启整个 dsh)
+- 2026-11-16 v1.2.0:等待期通知(app 37/37,含通道契约与后台结束通知的测试);Kotlin 前台服务编译通过、manifest 校验通过;**真机通知行为待验收**(见上「下一步」)
 - 2026-11-16 副作用提醒:重载插件时 dsh 会重新 apply 整个 profile,`dsh-pet` 因缺 `@electron/get` 没能重新激活(`fiberPhase=null`,`enabled=true`)。与鲸灵无关,修复方式:在 `C:\Users\liduo\.dsh\profiles\desktop` 里 `npm i @electron/get` 后再次启用 dsh-pet(或忽略,只是桌面宠物)
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/harness.dart';
+import 'wait_alert.dart';
 import 'api.dart';
 import 'providers.dart';
 
@@ -286,6 +287,12 @@ class HarnessController extends Notifier<HarnessState> {
       );
       if (taskId.isEmpty) throw ApiException('服务器未返回 task_id');
       state = state.copyWith(taskId: taskId);
+      // 等待期:M3.6 起前台服务保活 + 通知栏常驻,跑完/出错再提醒
+      final firstLine = prompt.trim().split('\n').first;
+      await WaitAlert.start(
+        title: '鲸灵 · 电脑在跑任务',
+        text: firstLine.length > 40 ? '${firstLine.substring(0, 40)}…' : firstLine,
+      );
       _reconnectAttempts = 0;
       await _attachStream(taskId);
     } on ApiException catch (error) {
@@ -299,6 +306,7 @@ class HarnessController extends Notifier<HarnessState> {
     if (api == null || taskId == null) return;
     try {
       await api.stopHarnessTask(taskId);
+      await WaitAlert.stop();
       state = state.copyWith(status: 'stopped');
     } on ApiException catch (error) {
       state = state.copyWith(error: error.message);
@@ -332,13 +340,27 @@ class HarnessController extends Notifier<HarnessState> {
         final request = HarnessConfirmRequest.fromPayload(event.payload);
         state = state.copyWith(confirm: request, confirmRemaining: request.timeoutSec);
         _startCountdown(request.timeoutSec);
+        if (!AppVisibility.foreground) {
+          unawaited(WaitAlert.notifyResult(
+            title: '电脑要你确认一个操作',
+            text: '工具:${request.tool} · 请在 ${request.timeoutSec} 秒内回到 App,超时会自动拒绝',
+          ));
+        }
       case 'confirm_result':
         _ticker?.cancel();
         state = state.copyWith(confirm: null, confirmRemaining: 0);
       case 'status':
         final status = (event.payload['status'] as String?) ?? '';
         if (status == 'idle') {
-          state = state.copyWith(status: state.running ? 'done' : state.status);
+          final wasRunning = state.running;
+          state = state.copyWith(status: wasRunning ? 'done' : state.status);
+          unawaited(WaitAlert.stop());
+          if (wasRunning && !AppVisibility.foreground) {
+            unawaited(WaitAlert.notifyResult(
+              title: '电脑上的任务结束了',
+              text: '打开鲸灵看结果',
+            ));
+          }
         } else {
           state = state.copyWith(status: status);
         }
@@ -347,6 +369,13 @@ class HarnessController extends Notifier<HarnessState> {
           status: 'error',
           error: (event.payload['message'] as String?) ?? '电脑节点报错',
         );
+        unawaited(WaitAlert.stop());
+        if (!AppVisibility.foreground) {
+          unawaited(WaitAlert.notifyResult(
+            title: '电脑上的任务出错了',
+            text: (event.payload['message'] as String?) ?? '打开鲸灵看看',
+          ));
+        }
     }
   }
 

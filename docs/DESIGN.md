@@ -387,4 +387,8 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 
 | 2026-11-16 | **v1.1.1 检查更新修复** | 现象:用户点「检查更新」后没有任何有效反馈。生产日志显示手机只发了 1 次 `GET /v1/app/version`,服务器 **200** 正常返回 `version_code=12`,既无 401 也无下载请求 → 链路是通的,是客户端把结果吞了。根因:旧代码 `appVersion()` 捕获所有 `ApiException` 返回 null、`check()` 又用 null 同时表示"已是最新"和"查询失败",于是 401/404/网络/解析错误全被显示成「已是最新版本」;GitHub 分支的异常则直接抛出,`_checkUpdate` 没有 try/catch,表现为"点了没反应"。修法:①`appVersion` 只把 404(服务器没放包)当"没有更新",其余错误上抛;②`check()` 返回 `UpdateCheck`(available / upToDate / failed),失败必带原因,GitHub 侧补超时 / 403 限流 / 无 APK 资产的具体说明;③设置页点击先提示「正在检查」,失败弹窗显示原因 + 当前版本 + 来源;④读不到本机版本号直接报错而不是猜(猜 0 会永远提示有新版本) |
 
+| 2026-11-16 | **M3.6 等待期通知(v1.2.0,方案 B)** | 需求:离开电脑时,跑完 / 出错 / 电脑断线要能主动响一声。选择**只在"正在等"期间开前台服务**:手机把输入送进会话(或派任务)且电脑在跑 → 起一个带常驻通知的 `WaitService`(Kotlin,`dataSync` 类型),作用只有两个:保活进程让 Dart 侧的会话 SSE 继续收事件 + 通知栏常驻「正在等电脑」;这一轮 `turn_end`(或离开页面)→ `stopService` 立刻停。结果通知只在 **App 不在前台**时发(完成 / 出错 / 断线),避免自己看着还响。**不引入 flutter_foreground_task / flutter_local_notifications**,通道沿用 M6 OTA 的 `jingling/*` 原生模式(Android 13+ 需 `POST_NOTIFICATIONS` 运行时权限,拒绝则只保活不发通知,设置页提供授权入口)。同一时刻只有一条等待(会话与任务共用),因为单用户不会同时等两件事 |
+| 2026-11-16 | M3.6 实现坑 | ①`startService` 在 App 进后台后会被限制,停服务要用 `stopService`;前台服务的通知在 `stopService` 路径下不一定会自动消失,得在 `onDestroy` 里 `stopForeground(STOP_FOREGROUND_REMOVE)`;②Android 14+ 必须给前台服务声明 `foregroundServiceType` 并在 `startForeground` 传类型,否则直接崩;③通知权限被拒时启动前台服务会得到一个"看不见的通知",所以先用 `canNotify()` 判断,拒了就干脆不启动;④权限申请的 `await` 期间这一轮可能已经结束,`start` 回来后要再检查一次等待态,否则会留下一个空转的服务 |
+
+
 

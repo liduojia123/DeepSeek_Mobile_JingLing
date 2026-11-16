@@ -2,11 +2,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'core/providers.dart';
+import 'core/wait_alert.dart';
 import 'pages/conversations_page.dart';
 import 'pages/pair_page.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 前台/后台状态决定"跑完了要不要发系统通知"
+  WidgetsBinding.instance.addObserver(_VisibilityObserver());
   runApp(const ProviderScope(child: JingLingApp()));
+}
+
+class _VisibilityObserver with WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    AppVisibility.foreground = state == AppLifecycleState.resumed;
+  }
 }
 
 class JingLingApp extends StatelessWidget {

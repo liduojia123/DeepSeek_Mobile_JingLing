@@ -148,6 +148,9 @@ class HarnessTimeline {
 
   bool running = false;
 
+  /// 最近一次 turn_end 的原因(completed / interrupted / error …),用来说明通知文案
+  String? lastTurnEndReason;
+
   int lastSeq = 0;
 
   /// 应用一条持久事件;返回是否真的改变了时间线(重复 seq 直接忽略)。
@@ -230,6 +233,8 @@ class HarnessTimeline {
 
       case 'turn_end':
         running = false;
+        final reason = event.payload['reason'];
+        lastTurnEndReason = reason is String ? reason : (reason is Map ? '${reason['kind'] ?? ''}' : null);
         draftText = '';
         draftReasoning = '';
         return true;

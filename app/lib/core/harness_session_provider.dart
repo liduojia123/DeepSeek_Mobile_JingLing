@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/harness_stream.dart';
 import 'api.dart';
 import 'providers.dart';
+import 'wait_alert.dart';
 
 /// 一个 dsh 会话在手机上的实时视图:时间线 + 状态 + 输入。
 class HarnessSessionState {
@@ -72,6 +73,10 @@ class HarnessSessionController extends Notifier<HarnessSessionState> {
   int _attempts = 0;
   /// 递增代号:切会话后旧流的事件必须丢弃
   int _generation = 0;
+  /// 是否已进入"等待电脑结果"态(前台服务在跑)
+  bool _waiting = false;
+  /// 通知权限只问一次,避免每次等待都弹
+  bool _askedNotificationPermission = false;
 
   @override
   HarnessSessionState build() {
@@ -85,6 +90,59 @@ class HarnessSessionController extends Notifier<HarnessSessionState> {
     _retryTimer?.cancel();
     _retryTimer = null;
     _generation += 1;
+    unawaited(_endWait(notify: false));
+  }
+
+  String get _sessionLabel => state.title.trim().isEmpty ? '电脑上的会话' : state.title.trim();
+
+  /// 进入等待态:前台服务保活 SSE + 通知栏常驻「正在等电脑」
+  Future<void> _beginWait() async {
+    if (_waiting) return;
+    _waiting = true;
+    if (!_askedNotificationPermission) {
+      _askedNotificationPermission = true;
+      await WaitAlert.ensurePermission();
+    }
+    final started = await WaitAlert.start(
+      title: '鲸灵 · 正在等电脑',
+      text: '$_sessionLabel 正在执行,可以锁屏',
+    );
+    if (!started) {
+      // 没有通知权限:不保活前台服务,但会话页照常工作
+      _waiting = false;
+      return;
+    }
+    // 权限申请的 await 期间这一轮可能已经结束(或被切走):立刻收掉,避免服务空转
+    if (!_waiting) {
+      await WaitAlert.stop();
+    }
+  }
+
+  /// 结束等待。`notify` 为真且 App 不在前台时发一条结果通知。
+  Future<void> _endWait({required bool notify, String? message}) async {
+    if (!_waiting) return;
+    _waiting = false;
+    await WaitAlert.stop();
+    if (notify && !AppVisibility.foreground) {
+      await WaitAlert.notifyResult(
+        title: '电脑上的这一轮结束了',
+        text: '$_sessionLabel · ${message ?? '可以回来看结果了'}',
+      );
+    }
+  }
+
+  String _reasonText(String? reason) {
+    switch (reason) {
+      case 'completed':
+      case 'end_turn':
+        return '已完成';
+      case 'error':
+        return '出错了,打开看看';
+      case 'interrupted':
+        return '已中断';
+      default:
+        return reason == null || reason.isEmpty ? '可以回来看结果了' : '结束($reason)';
+    }
   }
 
   /// 进入会话:重置时间线,从 after_seq=0 拉历史并接实时。
@@ -148,6 +206,7 @@ class HarnessSessionController extends Notifier<HarnessSessionState> {
           model: event.model,
           revision: state.revision + 1,
         );
+        if (event.running) unawaited(_beginWait());
         return;
       case HarnessSessionEvent():
         changed = timeline.applyEvent(event);
@@ -156,11 +215,19 @@ class HarnessSessionController extends Notifier<HarnessSessionState> {
             revision: state.revision + 1,
             status: timeline.running ? 'running' : 'idle',
           );
+          if (timeline.running) {
+            unawaited(_beginWait());
+          } else if (event.kind == 'turn_end') {
+            unawaited(_endWait(notify: true, message: _reasonText(timeline.lastTurnEndReason)));
+          }
         }
         return;
       case HarnessSessionLive():
         if (event.kind == 'error') {
           state = state.copyWith(error: event.message ?? '电脑节点断开连接', revision: state.revision + 1);
+          if (_waiting) {
+            unawaited(_endWait(notify: true, message: '电脑断线了,结果没等到'));
+          }
           return;
         }
         changed = timeline.applyLive(event);
