@@ -9,6 +9,7 @@ import '../models/events.dart';
 import '../models/harness.dart';
 import '../models/harness_stream.dart';
 import '../models/models.dart';
+import '../models/reminder.dart';
 import 'sse_client.dart';
 
 class ApiException implements Exception {
@@ -320,6 +321,32 @@ class ApiClient {
 
   Future<void> deleteMemory(String id) async {
     final response = await _guard(() => _client.delete(_uri('/v1/memories/$id'), headers: _headers()));
+    _decode(response);
+  }
+
+  // ---------- 提醒(M7) ----------
+
+  /// 还没落地的提醒(含 pending 与未来 scheduled),用于启动补排。
+  Future<List<ServerReminder>> remindersActive() async {
+    final json = await _guard(() async => _decode(await _client.get(
+          _uri('/v1/reminders', {'status': 'active'}),
+          headers: _headers(),
+        )));
+    return ((json['reminders'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((item) => ServerReminder.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
+
+  Future<void> ackReminder(String id, {required String status, String? nativeAlarmId, String? fireAt}) async {
+    final body = <String, String>{'status': status};
+    if (nativeAlarmId != null) body['native_alarm_id'] = nativeAlarmId;
+    if (fireAt != null) body['fire_at'] = fireAt;
+    final response = await _guard(() => _client.post(
+          _uri('/v1/reminders/$id/ack'),
+          headers: _headers(),
+          body: jsonEncode(body),
+        ));
     _decode(response);
   }
   // ---------- 语音(M4) ----------

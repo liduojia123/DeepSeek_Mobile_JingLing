@@ -20,11 +20,13 @@ import java.io.File
 /**
  * 原生能力入口:
  *  - `jingling/installer`:M6+ OTA 把 APK 交给系统安装器;
- *  - `jingling/wait`:M3.6 等待期前台服务 + 结果通知。
+ *  - `jingling/wait`:M3.6 等待期前台服务 + 结果通知;
+ *  - `jingling/reminders`:M7 提醒(精确闹钟)。
  */
 class MainActivity : FlutterActivity() {
     private val installerChannel = "jingling/installer"
     private val waitChannel = "jingling/wait"
+    private val remindersChannel = "jingling/reminders"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -99,6 +101,57 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, remindersChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "canScheduleExact" -> result.success(ReminderScheduler.canScheduleExact(this))
+                    "openExactAlarmSettings" -> {
+                        openExactAlarmSettings()
+                        result.success(true)
+                    }
+                    "listScheduled" -> {
+                        val items = ReminderScheduler.listScheduled(this).map {
+                            mapOf("id" to it.id, "text" to it.text, "fireAtMs" to it.fireAtMs)
+                        }
+                        result.success(items)
+                    }
+                    "schedule" -> {
+                        val id = call.argument<String>("id")
+                        val fireAtMs = call.argument<Number>("fireAtMs")?.toLong()
+                        if (id.isNullOrEmpty() || fireAtMs == null) {
+                            result.error("bad_args", "缺少 id 或 fireAtMs", null)
+                            return@setMethodCallHandler
+                        }
+                        val text = call.argument<String>("text") ?: "提醒"
+                        if (!ReminderScheduler.canScheduleExact(this)) {
+                            result.error("exact_alarm_denied", "缺少精确闹钟权限", null)
+                            return@setMethodCallHandler
+                        }
+                        val ok = ReminderScheduler.schedule(this, id, text, fireAtMs)
+                        result.success(ok)
+                    }
+                    "cancel" -> {
+                        val id = call.argument<String>("id")
+                        if (id.isNullOrEmpty()) {
+                            result.error("bad_args", "缺少 id", null)
+                            return@setMethodCallHandler
+                        }
+                        ReminderScheduler.cancel(this, id)
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun openExactAlarmSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+            data = Uri.parse("package:$packageName")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { startActivity(intent) }
     }
 
     // ---------- 通知权限 ----------

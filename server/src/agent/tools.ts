@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Config } from '../config.js';
+import type { DpappEvent } from '../deepseek/events.js';
 import { nowIso, type Db } from '../db.js';
+import { formatShanghai, nowShanghaiIso, toUtcIso } from '../time.js';
 
 /** 一次客户端工具调用(已从流式分片拼好) */
 export interface ClientToolCall {
@@ -26,6 +28,14 @@ interface MemoryRow {
   tags: string;
   created_at: string;
   updated_at: string;
+}
+
+/** M7:提醒(手机本地精确闹钟)。 */
+interface ReminderRow {
+  id: string;
+  text: string;
+  fire_at: string;
+  status: string;
 }
 
 const MAX_HTTP_RESPONSE_CHARS = 8000;
@@ -97,8 +107,58 @@ export const HTTP_TOOL_SPEC: Record<string, unknown> = {
   },
 };
 
+/**
+ * M7:提醒三件套。服务器不"响",只负责把话说清楚并落库;
+ * 真正到点响的是手机端 AlarmManager(见 docs/HANDOFF-M7.md)。
+ */
+export const REMINDER_TOOL_SPECS: Array<Record<string, unknown>> = [
+  {
+    type: 'function',
+    function: {
+      name: 'reminder_create',
+      description:
+        '为用户设置到点提醒(手机本地精确闹钟 + 系统通知)。用户说「提醒我…」「X 分钟后叫我」「明天 8 点提醒我」时调用。fire_at 必须是把相对时间换算后的、带时区偏移的 ISO8601(如 2026-11-17T20:30:00+08:00);拿不准具体时间就先问用户,不要猜。',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: '提醒内容,简短一句,如「关火」' },
+          fire_at: { type: 'string', description: '触发时间,ISO8601 带偏移' },
+        },
+        required: ['text', 'fire_at'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'reminder_cancel',
+      description:
+        '取消一个还没响的提醒。用户说「取消提醒」「别提醒了」时用;先用 reminder_list 查 id,只有一条匹配就直接取消。',
+      parameters: {
+        type: 'object',
+        properties: {
+          reminder_id: { type: 'string', description: 'reminder_list 返回的 reminder_id' },
+        },
+        required: ['reminder_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'reminder_list',
+      description: '列出用户还没响的提醒(取消之前先查这个)。',
+      parameters: {
+        type: 'object',
+        properties: { limit: { type: 'number', description: '返回条数,默认 10,最大 50' } },
+      },
+    },
+  },
+];
+
 export function clientToolSpecs(config: Config): Array<Record<string, unknown>> {
-  return config.httpAllowlist.length > 0 ? [...CLIENT_TOOL_SPECS, HTTP_TOOL_SPEC] : CLIENT_TOOL_SPECS;
+  const specs = [...CLIENT_TOOL_SPECS, ...REMINDER_TOOL_SPECS];
+  return config.httpAllowlist.length > 0 ? [...specs, HTTP_TOOL_SPEC] : specs;
 }
 
 /** 域名白名单匹配:允许精确域名与其子域。 */
@@ -134,12 +194,21 @@ const clampLimit = (value: unknown, fallback: number, max: number): number => {
   return Math.min(Math.floor(parsed), max);
 };
 
+export interface ClientToolOptions {
+  /** 把"需要手机配合"的事件(reminder / reminder_cancel)推给当前 SSE 流 */
+  emit?: (event: DpappEvent) => void;
+  /** 当前会话;提醒落库时用来关联(删会话不删提醒) */
+  conversationId?: string;
+}
+
 /** 执行一次客户端工具调用。永不抛异常:失败也返回内容,让模型知道发生了什么。 */
 export async function executeClientTool(
   config: Config,
   db: Db,
   call: ClientToolCall,
+  options: ClientToolOptions = {},
 ): Promise<ClientToolResult> {
+  const { emit, conversationId } = options;
   const args = parseArgs(call.arguments);
   const fail = (content: string): ClientToolResult => ({
     callId: call.id,
@@ -249,6 +318,102 @@ export async function executeClientTool(
       } catch (error) {
         return fail(`请求失败:${error instanceof Error ? error.message : String(error)}`);
       }
+    }
+    case 'reminder_create': {
+      const text = typeof args.text === 'string' ? args.text.trim() : '';
+      if (text === '') return fail('text 不能为空');
+      const raw = typeof args.fire_at === 'string' ? args.fire_at.trim() : '';
+      if (raw === '') return fail('fire_at 不能为空');
+      // 必须带偏移:否则 Date.parse 会按服务器时区猜,同一句话在不同机器上算出不同时刻
+      if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(raw)) {
+        return fail('fire_at 必须带时区偏移,例如 2026-11-17T20:30:00+08:00');
+      }
+      const fireAt = toUtcIso(raw);
+      if (fireAt === null) return fail('fire_at 不是合法时间');
+      const fireMs = Date.parse(fireAt);
+      const now = Date.now();
+      if (fireMs < now + 10_000) {
+        return fail(
+          `这个时间已经过去或太近(${formatShanghai(fireAt)}),现在是 ${formatShanghai(new Date(now).toISOString())}。请确认是今天还是明天,给出未来时间。`,
+        );
+      }
+      // 幂等:同一会话里同样的文本与时刻,不重复建、不重复推事件(防"重新生成"建两条)
+      const dup = db
+        .prepare(
+          `SELECT id FROM reminder
+            WHERE text = ? AND fire_at = ? AND status != 'cancelled'
+              AND ((conversation_id IS NULL AND ? IS NULL) OR conversation_id = ?)
+            LIMIT 1`,
+        )
+        .get(text, fireAt, conversationId ?? null, conversationId ?? null) as { id: string } | undefined;
+      if (dup !== undefined) {
+        return {
+          callId: call.id,
+          name: call.name,
+          ok: true,
+          content: `这条提醒已经设过了:${formatShanghai(fireAt)} ${text}`,
+          summary: `提醒已存在 ${formatShanghai(fireAt)}`,
+        };
+      }
+      const id = randomUUID();
+      db.prepare(
+        'INSERT INTO reminder (id, conversation_id, text, fire_at, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(id, conversationId ?? null, text.slice(0, 200), fireAt, 'pending', nowIso());
+      emit?.({ type: 'reminder', reminder_id: id, text, fire_at: fireAt });
+      const minutes = Math.round((fireMs - now) / 60_000);
+      return {
+        callId: call.id,
+        name: call.name,
+        ok: true,
+        content: `已设置提醒 ${formatShanghai(fireAt)} ${text}(约 ${minutes} 分钟后)`,
+        summary: `设置提醒 ${formatShanghai(fireAt)} ${text}`,
+      };
+    }
+    case 'reminder_cancel': {
+      const reminderId = typeof args.reminder_id === 'string' ? args.reminder_id.trim() : '';
+      if (reminderId === '') return fail('reminder_id 不能为空');
+      const row = db
+        .prepare('SELECT id, text, fire_at, status FROM reminder WHERE id = ?')
+        .get(reminderId) as ReminderRow | undefined;
+      if (row === undefined) return fail('没有这条提醒(可能已删除),可以先用 reminder_list 查一下');
+      if (row.status === 'cancelled') return fail('这条提醒已经取消过了');
+      if (row.status === 'fired') return fail('这条提醒已经响过了,取消不了');
+      db.prepare("UPDATE reminder SET status = 'cancelled' WHERE id = ?").run(reminderId);
+      emit?.({ type: 'reminder_cancel', reminder_id: reminderId });
+      return {
+        callId: call.id,
+        name: call.name,
+        ok: true,
+        content: `已取消提醒:${formatShanghai(row.fire_at)} ${row.text}`,
+        summary: `取消提醒 ${formatShanghai(row.fire_at)}`,
+      };
+    }
+    case 'reminder_list': {
+      const limit = clampLimit(args.limit, 10, 50);
+      const rows = db
+        .prepare(
+          `SELECT id, text, fire_at, status FROM reminder
+            WHERE status IN ('pending','scheduled') AND fire_at > ?
+            ORDER BY fire_at ASC LIMIT ?`,
+        )
+        .all(new Date().toISOString(), limit) as ReminderRow[];
+      return {
+        callId: call.id,
+        name: call.name,
+        ok: true,
+        content:
+          rows.length === 0
+            ? '当前没有待响的提醒'
+            : JSON.stringify(
+                rows.map((row) => ({
+                  reminder_id: row.id,
+                  text: row.text,
+                  fire_at: formatShanghai(row.fire_at),
+                  status: row.status,
+                })),
+              ),
+        summary: `列出提醒 ${rows.length} 条`,
+      };
     }
     default:
       return fail(`未知工具:${call.name}`);

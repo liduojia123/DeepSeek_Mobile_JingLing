@@ -2,21 +2,30 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'core/providers.dart';
+import 'core/reminders.dart';
 import 'core/wait_alert.dart';
 import 'pages/conversations_page.dart';
 import 'pages/pair_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // 前台/后台状态决定"跑完了要不要发系统通知"
-  WidgetsBinding.instance.addObserver(_VisibilityObserver());
-  runApp(const ProviderScope(child: JingLingApp()));
+  final container = ProviderContainer();
+  // 前台/后台状态决定"跑完了要不要发系统通知";回前台顺手补排提醒
+  WidgetsBinding.instance.addObserver(_VisibilityObserver(container));
+  runApp(UncontrolledProviderScope(container: container, child: const JingLingApp()));
 }
 
 class _VisibilityObserver with WidgetsBindingObserver {
+  _VisibilityObserver(this._container);
+
+  final ProviderContainer _container;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     AppVisibility.foreground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.resumed) {
+      syncRemindersInBackground(_container.read(apiProvider));
+    }
   }
 }
 
@@ -44,11 +53,25 @@ class JingLingApp extends StatelessWidget {
 }
 
 /// 根据本地是否已配对决定进配对页还是会话列表(声明式路由,不用手动跳转)。
-class StartupGate extends ConsumerWidget {
+class StartupGate extends ConsumerStatefulWidget {
   const StartupGate({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<StartupGate> createState() => _StartupGateState();
+}
+
+class _StartupGateState extends ConsumerState<StartupGate> {
+  bool _synced = false;
+
+  /// 启动时补排一次提醒(回前台的补排由 _VisibilityObserver 负责)。
+  void _syncOnce({required bool paired}) {
+    if (_synced || !paired) return;
+    _synced = true;
+    syncRemindersInBackground(ref.read(apiProvider));
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
 
     return settings.when(
@@ -56,7 +79,10 @@ class StartupGate extends ConsumerWidget {
       error: (error, _) => Scaffold(
         body: Center(child: Text('读取本地配置失败:$error')),
       ),
-      data: (value) => value.paired ? const ConversationsPage() : const PairPage(),
+      data: (value) {
+        _syncOnce(paired: value.paired);
+        return value.paired ? const ConversationsPage() : const PairPage();
+      },
     );
   }
 }

@@ -80,6 +80,14 @@ sealed class DpappEvent {
         );
       case 'title':
         return TitleEvent(title: _asString(json['title']) ?? '');
+      case 'reminder':
+        return ReminderEvent(
+          reminderId: _asString(json['reminder_id']) ?? '',
+          text: _asString(json['text']) ?? '',
+          fireAt: _asString(json['fire_at']) ?? '',
+        );
+      case 'reminder_cancel':
+        return ReminderCancelEvent(reminderId: _asString(json['reminder_id']) ?? '');
       case 'file_attached':
         return FileAttachedEvent(
           fileId: _asString(json['file_id']) ?? '',
@@ -229,6 +237,22 @@ final class SafetyBlockEvent extends DpappEvent {
 final class TitleEvent extends DpappEvent {
   const TitleEvent({required this.title});
   final String title;
+}
+
+/// M7:服务端说「设一个提醒」,手机负责真的排进系统闹钟。
+/// fireAt 是带时区偏移的 ISO8601,客户端用 DateTime.parse 换算成毫秒。
+final class ReminderEvent extends DpappEvent {
+  const ReminderEvent({required this.reminderId, required this.text, required this.fireAt});
+
+  final String reminderId;
+  final String text;
+  final String fireAt;
+}
+
+final class ReminderCancelEvent extends DpappEvent {
+  const ReminderCancelEvent({required this.reminderId});
+
+  final String reminderId;
 }
 
 final class MessageEndEvent extends DpappEvent {

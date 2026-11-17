@@ -119,6 +119,23 @@ export const ErrorEvent = z.object({
   message: z.string(),
 });
 
+/**
+ * M7 提醒:服务端只负责"理解并落库",真正响的是手机本地闹钟。
+ * 手机收到 reminder 就 schedule,收到 reminder_cancel 就 cancel,然后 ack 回服务端。
+ */
+export const ReminderEvent = z.object({
+  type: z.literal('reminder'),
+  reminder_id: z.string().min(1),
+  text: z.string(),
+  /** 带时区偏移的 ISO8601,客户端直接换算成毫秒 */
+  fire_at: z.string(),
+});
+
+export const ReminderCancelEvent = z.object({
+  type: z.literal('reminder_cancel'),
+  reminder_id: z.string().min(1),
+});
+
 export const DpappEventSchema = z.discriminatedUnion('type', [
   MessageStartEvent,
   ThinkingDeltaEvent,
@@ -130,6 +147,8 @@ export const DpappEventSchema = z.discriminatedUnion('type', [
   FileAttachedEvent,
   SafetyBlockEvent,
   TitleEvent,
+  ReminderEvent,
+  ReminderCancelEvent,
   MessageEndEvent,
   ErrorEvent,
 ]);

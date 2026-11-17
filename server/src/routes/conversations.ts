@@ -405,6 +405,7 @@ export function registerConversationRoutes(
         emit: writeEvent,
         search: body.search,
         thinking: body.thinking,
+        conversationId: conv.id,
       });
     } catch (error) {
       app.log.error({ err: error }, 'agent turn failed');

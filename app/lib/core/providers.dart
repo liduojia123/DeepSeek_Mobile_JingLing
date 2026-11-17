@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/events.dart';
 import '../models/models.dart';
 import 'api.dart';
 import 'config.dart';
+import 'reminders.dart';
 
 final secureStoreProvider = Provider<SecureStore>((ref) => const SecureStore());
 
@@ -305,6 +308,10 @@ class ChatController extends Notifier<ChatState> {
             );
           case TitleEvent(:final title):
             state = state.copyWith(title: title);
+          case ReminderEvent(:final reminderId, :final text, :final fireAt):
+            unawaited(_handleReminder(reminderId: reminderId, text: text, fireAt: fireAt));
+          case ReminderCancelEvent(:final reminderId):
+            unawaited(_handleReminderCancel(reminderId));
           case DpappErrorEvent(:final message):
             failure = message;
           case SafetyBlockEvent(:final reason, :final source):
@@ -429,6 +436,57 @@ class ChatController extends Notifier<ChatState> {
   }
 
   void clearBanner() => state = state.copyWith(error: null, info: null);
+
+  /// M7:服务端说要提醒 → 排进系统闹钟 → ack 回服务端。
+  ///
+  /// 排不上(没有精确闹钟权限)时不 ack,并给出可见提示:服务端会一直把它当 pending,
+  /// 下次前台补排会再试。
+  Future<void> _handleReminder({
+    required String reminderId,
+    required String text,
+    required String fireAt,
+  }) async {
+    final api = ref.read(apiProvider);
+    final fireMs = DateTime.tryParse(fireAt)?.millisecondsSinceEpoch;
+    if (api == null || reminderId.isEmpty || fireMs == null) return;
+
+    final ok = await RemindersChannel.schedule(id: reminderId, text: text, fireAtMs: fireMs);
+    if (!ref.mounted) return;
+    if (!ok) {
+      state = state.copyWith(info: '提醒没能排进系统闹钟:请在设置里允许「精确闹钟」后再试');
+      return;
+    }
+    final when = _formatReminderTime(fireMs);
+    state = state.copyWith(info: '已设置提醒:$when · $text');
+    try {
+      await api.ackReminder(reminderId, status: 'scheduled');
+    } on ApiException {
+      // ack 失败不影响已排的闹钟;补排会再对齐
+    }
+  }
+
+  /// M7:服务端说取消 → 撤掉本地闹钟(并记进墓碑,防补排把它排回来)。
+  Future<void> _handleReminderCancel(String reminderId) async {
+    final api = ref.read(apiProvider);
+    if (reminderId.isEmpty) return;
+    await RemindersChannel.cancel(reminderId);
+    await ReminderTombstones.add(reminderId);
+    if (!ref.mounted) return;
+    state = state.copyWith(info: '已取消提醒');
+    if (api != null) {
+      try {
+        await api.ackReminder(reminderId, status: 'cancelled');
+      } on ApiException {
+        // 补排时会用墓碑重试
+      }
+    }
+  }
+
+  static String _formatReminderTime(int ms) {
+    final at = DateTime.fromMillisecondsSinceEpoch(ms);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(at.month)}-${two(at.day)} ${two(at.hour)}:${two(at.minute)}';
+  }
 
   Future<void> _reload() async {
     final api = ref.read(apiProvider);

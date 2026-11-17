@@ -7,6 +7,7 @@ import '../core/wait_alert.dart';
 import 'computer_page.dart';
 import 'devices_page.dart';
 import 'memory_page.dart';
+import 'reminders_page.dart';
 import 'usage_page.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -330,6 +331,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             title: const Text('检查更新'),
             subtitle: Text(_versionLabel.isEmpty ? '从服务器下载新版本并安装(免插线)' : '当前 $_versionLabel · 从服务器下载并安装'),
             onTap: _checkUpdate,
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.alarm_outlined),
+            title: const Text('提醒'),
+            subtitle: const Text('查看/取消已经设好的到点提醒(手机本地闹钟)'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const RemindersPage()),
+            ),
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,

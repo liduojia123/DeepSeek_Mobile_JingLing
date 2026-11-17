@@ -57,6 +57,19 @@ CREATE TABLE IF NOT EXISTS memory_note (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_note_updated ON memory_note(updated_at);
 
+-- M7:手机原生提醒。conversation_id 用 SET NULL:提醒是用户显式产物,
+-- 删会话/临时会话被清扫都不该让一个已经答应过的闹钟消失。
+CREATE TABLE IF NOT EXISTS reminder (
+  id              TEXT PRIMARY KEY,
+  conversation_id TEXT REFERENCES conversation(id) ON DELETE SET NULL,
+  text            TEXT NOT NULL,
+  fire_at         TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','scheduled','fired','cancelled')),
+  native_alarm_id TEXT,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reminder_status ON reminder(status, fire_at);
+
 -- tokens_in/tokens_out 是对 DESIGN §5.2 的小扩展:F9 需要按天统计 token,
 -- 只在 usage_log.quantity 里放总 token 无法还原拆分。
 CREATE TABLE IF NOT EXISTS usage_log (

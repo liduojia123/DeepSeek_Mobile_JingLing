@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- M7 提醒:精确闹钟(USE_EXACT_ALARM 为闹钟类应用自动授予;Android 12 走 SCHEDULE_EXACT_ALARM)+ 开机重建 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 拍照提问:相机不是必需硬件(平板/无相机也能装) -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application
@@ -56,6 +60,18 @@
             android:name=".WaitService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- M7:提醒到点的广播 + 开机重建(都不对外暴露) -->
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

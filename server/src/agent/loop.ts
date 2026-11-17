@@ -5,6 +5,7 @@ import { mockStream } from '../deepseek/mock.js';
 import type { Db } from '../db.js';
 import { detectOutputRefusal, type SafetyFlag } from './safety.js';
 import { clientToolSpecs, executeClientTool, type ClientToolCall } from './tools.js';
+import { timeContextLine } from '../time.js';
 
 export interface ToolTrace {
   tool: string;
@@ -57,6 +58,8 @@ export interface AgentTurnParams {
   thinking?: boolean;
   /** 本次请求是否启用客户端工具(默认启用) */
   toolsEnabled?: boolean;
+  /** 当前会话 id(提醒落库用;删会话不删提醒) */
+  conversationId?: string;
 }
 
 /** 中断/失败时上游不会给 usage,按字符数估算,避免用量看板系统性少计。 */
@@ -106,10 +109,19 @@ interface RoundOutput {
  * M0 直通骨架 + M2 服务端联网工具 + M5 客户端工具循环(memory/http_request)。
  * 本函数不抛异常:失败以 stopReason 返回,路由层负责收尾与落库。
  */
+/**
+ * M7:模型要把「20 分钟后」「明天 8 点」换算成绝对时间,必须先知道"现在几点"。
+ * 只在一轮对话最前面插一条 system,不改其余消息顺序。
+ */
+export function buildWorkingMessages(messages: ChatMessage[], toolsEnabled: boolean): ChatMessage[] {
+  if (!toolsEnabled) return [...messages];
+  return [{ role: 'system', content: timeContextLine() }, ...messages];
+}
+
 export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnResult> {
   const { config, db, signal, emit } = params;
-  const workingMessages: ChatMessage[] = [...params.messages];
   const tools = params.toolsEnabled === false ? [] : clientToolSpecs(config);
+  const workingMessages = buildWorkingMessages(params.messages, tools.length > 0);
 
   let thinking = '';
   let text = '';
@@ -325,7 +337,10 @@ export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnRe
         phase: 'tool',
         action_type: call.name,
       });
-      const result = await executeClientTool(config, db, call);
+      const result = await executeClientTool(config, db, call, {
+        emit,
+        conversationId: params.conversationId,
+      });
       emit({
         type: 'tool_result',
         tool: call.name,
