@@ -67,9 +67,11 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 
 | # | 功能 | 说明 |
 |---|---|---|
-| G1 | `run_code` 代码执行沙箱 | Docker 隔离、无网络、限时限资源;算数、数据处理、画图 |
+| G1 | **手机原生提醒**(日历/闹钟/通知) | agent 说「提醒我 8 点开会」要真的落到系统;2026-11-17 从 v2 提前到本版 |
 | G2 | 记忆管理 UI | 查看/编辑/删除 memory 工具沉淀的每一条记忆,透明可控 |
 | G3 | 拍照/相册提问 | 复用 F5 图片解析,补相机入口 |
+
+> `run_code` 代码执行沙箱已于 2026-11-17 决定不做(理由见 §10 决策记录)。
 
 ### v2 — P2(架构预留)
 
@@ -108,12 +110,12 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 | `memory` | 个人记忆:存/查/列 | 存 SQLite;agent 可主动沉淀用户偏好、事实;v1.5 配管理 UI |
 | `http_request` | 调用个人服务 | 域名白名单制;可查自己服务器上的其他服务 |
 
-**v1.5**:`run_code`(Docker 沙箱)。**v2**:日历/闹钟(设备桥)、知识库检索、定时任务。
+**v1.5(当前)**:手机原生提醒(日历/闹钟)。**v2**:知识库检索、定时任务、推送(FCM/APNs)。
 
 ### 4.3 护栏
 
 - 工具调用轮数上限、单次执行超时
-- `http_request` 域名白名单;`run_code` 无网络 + 资源限额
+- `http_request` 域名白名单
 - 每日 token / 工具调用预算,超预算熔断并通知
 - 全部工具调用留痕(入参/出参/耗时/费用),UI 可展开查看
 
@@ -389,6 +391,7 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 
 | 2026-11-16 | **M3.6 等待期通知(v1.2.0,方案 B)** | 需求:离开电脑时,跑完 / 出错 / 电脑断线要能主动响一声。选择**只在"正在等"期间开前台服务**:手机把输入送进会话(或派任务)且电脑在跑 → 起一个带常驻通知的 `WaitService`(Kotlin,`dataSync` 类型),作用只有两个:保活进程让 Dart 侧的会话 SSE 继续收事件 + 通知栏常驻「正在等电脑」;这一轮 `turn_end`(或离开页面)→ `stopService` 立刻停。结果通知只在 **App 不在前台**时发(完成 / 出错 / 断线),避免自己看着还响。**不引入 flutter_foreground_task / flutter_local_notifications**,通道沿用 M6 OTA 的 `jingling/*` 原生模式(Android 13+ 需 `POST_NOTIFICATIONS` 运行时权限,拒绝则只保活不发通知,设置页提供授权入口)。同一时刻只有一条等待(会话与任务共用),因为单用户不会同时等两件事 |
 | 2026-11-16 | M3.6 实现坑 | ①`startService` 在 App 进后台后会被限制,停服务要用 `stopService`;前台服务的通知在 `stopService` 路径下不一定会自动消失,得在 `onDestroy` 里 `stopForeground(STOP_FOREGROUND_REMOVE)`;②Android 14+ 必须给前台服务声明 `foregroundServiceType` 并在 `startForeground` 传类型,否则直接崩;③通知权限被拒时启动前台服务会得到一个"看不见的通知",所以先用 `canNotify()` 判断,拒了就干脆不启动;④权限申请的 `await` 期间这一轮可能已经结束,`start` 回来后要再检查一次等待态,否则会留下一个空转的服务 |
+| 2026-11-17 | **砍掉 `run_code` 沙箱(v1.5),把「手机原生提醒」提前到 v1.5**(用户 2026-11-17 拍板)。理由:①dsh 桥已覆盖"真跑代码"(真实仓库/真实环境/逐条审批),"验证代码"不需要服务器沙箱;②服务器自身在 Docker 容器内,再开容器要挂 `/var/run/docker.sock`,等于把宿主 root 交给本服务,与"隔离"目的相反;③DESIGN 原定用途是"算数/数据处理/画图",而客户端目前没有图片渲染,画图回传要另做生成/存储/下载/渲染四件事;④手机 + 自有电脑常在的场景下,增量只剩"电脑不在线时算个数"。而 agent 说「提醒我 8 点」目前什么都不发生,缺口更硬 |
 
 
 
