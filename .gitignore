@@ -41,3 +41,6 @@ build-release/
 *.keystore
 key.properties
 keystore*.txt
+
+# 视觉稿(本地推演,不入库)
+.superpowers/

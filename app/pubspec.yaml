@@ -32,6 +32,13 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # M8:内置中文字体,避免界面跟着手机系统字体变。
+  # Noto Sans SC(可变字体,GB2312 全字表子集,约 3.6MB);字重靠 FontVariation 取值。
+  fonts:
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansSC-VF.ttf
+
 # M6:应用图标生成(支持自适应图标)
 flutter_launcher_icons:
   android: true

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'core/providers.dart';
 import 'core/reminders.dart';
 import 'core/wait_alert.dart';
+import 'design/theme.dart';
 import 'pages/conversations_page.dart';
 import 'pages/pair_page.dart';
 
@@ -32,21 +33,14 @@ class _VisibilityObserver with WidgetsBindingObserver {
 class JingLingApp extends StatelessWidget {
   const JingLingApp({super.key});
 
-  static const Color _seed = Color(0xFF2F6FED);
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '鲸灵',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: _seed),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.dark),
-        useMaterial3: true,
-      ),
+      theme: buildAppTheme(Brightness.light),
+      darkTheme: buildAppTheme(Brightness.dark),
+      themeMode: ThemeMode.system,
       home: const StartupGate(),
     );
   }

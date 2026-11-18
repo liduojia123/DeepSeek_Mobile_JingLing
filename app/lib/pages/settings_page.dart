@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../core/config.dart';
 import '../core/providers.dart';
 import '../core/update.dart';
 import '../core/wait_alert.dart';
@@ -23,6 +24,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   final TextEditingController _serverUrl = TextEditingController();
   bool _saving = false;
   bool _notifyAllowed = true;
+  bool _autoSpeak = true;
 
   @override
   void initState() {
@@ -30,6 +32,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final url = ref.read(settingsProvider).value?.serverUrl;
       if (url != null && mounted) _serverUrl.text = url;
+      const SecureStore().readAutoSpeak().then((value) {
+        if (mounted) setState(() => _autoSpeak = value);
+      });
       UpdateService.readSource().then((source) {
         if (mounted) setState(() => _updateSource = source);
       });
@@ -276,14 +281,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               MaterialPageRoute<void>(builder: (_) => const ComputerPage()),
             ),
           ),
-          ListTile(
+          SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.record_voice_over_outlined),
-            title: const Text('语音'),
-            subtitle: const Text('聊天页麦克风:按住说话/点按录音;自动朗读在聊天页右上角切换'),
-            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('打开任一会话,使用输入框左侧麦克风;朗读开关在会话右上角')),
-            ),
+            secondary: const Icon(Icons.record_voice_over_outlined),
+            title: const Text('自动朗读'),
+            subtitle: const Text('每条回答生成完自动播报;想临时听一遍,用对话页右上角「⋯」里的「朗读这条回答」'),
+            value: _autoSpeak,
+            onChanged: (value) async {
+              setState(() => _autoSpeak = value);
+              await const SecureStore().writeAutoSpeak(value);
+            },
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,

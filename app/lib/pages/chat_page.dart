@@ -11,6 +11,9 @@ import '../core/config.dart';
 import '../core/providers.dart';
 import '../core/voice.dart';
 import '../core/voice_session.dart';
+import '../design/components/empty_state.dart';
+import '../design/theme.dart';
+import '../design/tokens.dart';
 import '../models/models.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_menu.dart';
@@ -276,7 +279,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       appBar: AppBar(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-
           if (_speaking)
             IconButton(
               tooltip: '停止朗读',
@@ -284,13 +286,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               icon: const Icon(Icons.stop_circle_outlined),
             ),
           IconButton(
-            tooltip: _autoSpeak ? '自动朗读:开' : '自动朗读:关',
-            onPressed: () async {
-              setState(() => _autoSpeak = !_autoSpeak);
-              await SecureStore().writeAutoSpeak(_autoSpeak);
-            },
-            icon: Icon(_autoSpeak ? Icons.volume_up : Icons.volume_off),
+            tooltip: '更多',
+            onPressed: () => _showChatMenu(chat),
+            icon: const Icon(Icons.more_horiz),
           ),
+          const SizedBox(width: AppSpace.xs),
         ],
       ),
       body: Column(
@@ -306,6 +306,120 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
+  /// 对话页的「⋯」:朗读这条回答 / 重命名 / 置顶 / 删除(M8 §4.2)。
+  Future<void> _showChatMenu(ChatState chat) async {
+    final colors = colorsOf(context);
+    final conversationId = chat.conversationId;
+    final conversation = chat.detail?.conversation;
+    if (conversationId == null) return;
+    final lastAnswer = _lastAssistantText(chat);
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.volume_up_outlined),
+              title: const Text('朗读这条回答'),
+              enabled: lastAnswer.isNotEmpty,
+              onTap: () => Navigator.pop(sheetContext, 'speak'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: const Text('重命名'),
+              onTap: () => Navigator.pop(sheetContext, 'rename'),
+            ),
+            ListTile(
+              leading: Icon(conversation?.pinned == true ? Icons.push_pin : Icons.push_pin_outlined),
+              title: Text(conversation?.pinned == true ? '取消置顶' : '置顶'),
+              onTap: () => Navigator.pop(sheetContext, 'pin'),
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: colors.danger),
+              title: Text('删除', style: TextStyle(color: colors.danger)),
+              onTap: () => Navigator.pop(sheetContext, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+
+    final api = ref.read(apiProvider);
+    switch (action) {
+      case 'speak':
+        await _speak(lastAnswer);
+        return;
+      case 'rename':
+        final controller = TextEditingController(text: conversation?.title ?? '');
+        final title = await showDialog<String>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('重命名会话'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '会话标题'),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+                child: const Text('保存'),
+              ),
+            ],
+          ),
+        );
+        controller.dispose();
+        if (title != null && title.isNotEmpty && api != null) {
+          await api.patchConversation(conversationId, title: title);
+          ref.invalidate(chatProvider);
+          ref.invalidate(conversationsProvider);
+        }
+        return;
+      case 'pin':
+        if (api == null) return;
+        await api.patchConversation(conversationId, pinned: !(conversation?.pinned ?? false));
+        ref.invalidate(chatProvider);
+        ref.invalidate(conversationsProvider);
+        return;
+      case 'delete':
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('删除会话'),
+            content: const Text('会话及其全部消息会被永久删除,确定吗?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('删除'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true && api != null) {
+          await api.deleteConversation(conversationId);
+          ref.invalidate(conversationsProvider);
+          if (mounted) Navigator.of(context).pop();
+        }
+        return;
+    }
+  }
+
+  /// 当前路径上最后一条有正文的助手消息。
+  String _lastAssistantText(ChatState chat) {
+    final nodes = chat.pathNodes;
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      final node = nodes[i];
+      if (node.role == 'assistant' && node.text.trim().isNotEmpty) return node.text;
+    }
+    return '';
+  }
+
   Widget _buildMessageList(ChatState chat, ThemeData theme) {
     final detail = chat.detail;
     final nodes = chat.pathNodes;
@@ -313,15 +427,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final hasStreaming = chat.generating || streaming.hasContent;
 
     if (nodes.isEmpty && chat.pendingUserText == null && !hasStreaming) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(
-            '和鲸灵说点什么吧\n长按消息可以复制、编辑或删除',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-        ),
+      return const EmptyState(
+        icon: Icons.forum_outlined,
+        title: '和鲸灵说点什么吧',
+        body: '长按消息可以复制、编辑或删除',
       );
     }
 
@@ -439,15 +548,95 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
     );
   }
+  /// Composer 上的圆钮:统一 44×44、filled 时用 accent。
+  Widget _composerIconButton({
+    required IconData icon,
+    required String tooltip,
+    VoidCallback? onPressed,
+    bool filled = false,
+  }) {
+    final colors = colorsOf(context);
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        minimumSize: const Size(44, 44),
+        backgroundColor: filled ? colors.accent : Colors.transparent,
+        foregroundColor: filled ? scheme.onPrimary : colors.textSecondary,
+        disabledBackgroundColor: filled ? colors.accent.withValues(alpha: 0.4) : Colors.transparent,
+        disabledForegroundColor: colors.textMuted,
+        shape: const CircleBorder(),
+      ),
+      icon: Icon(icon, size: 20),
+    );
+  }
+
+  /// 「＋」:语音模式 / 拍照 / 相册 / 文件。
+  Future<void> _showInputActions(VoiceSessionState voice) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(voice.active ? Icons.mic : Icons.mic_none),
+              title: Text(voice.active ? '退出语音模式' : '语音模式'),
+              subtitle: Text(voice.active ? '当前正在连续对话' : '免按住,说完自动识别'),
+              onTap: () => Navigator.pop(sheetContext, 'voice'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('拍照'),
+              onTap: () => Navigator.pop(sheetContext, 'photo'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('相册'),
+              onTap: () => Navigator.pop(sheetContext, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.attach_file),
+              title: const Text('文件'),
+              onTap: () => Navigator.pop(sheetContext, 'file'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'voice':
+        if (voice.active) {
+          await ref.read(voiceSessionProvider.notifier).stop();
+        } else {
+          await _voice.stop();
+          await ref.read(voiceSessionProvider.notifier).start();
+        }
+        return;
+      case 'photo':
+        await _takePhoto();
+        return;
+      case 'gallery':
+        await _pickFromGallery();
+        return;
+      case 'file':
+        await _pickFile();
+        return;
+    }
+  }
+
   Widget _buildComposer(ChatState chat, ThemeData theme) {
     final voice = ref.watch(voiceSessionProvider);
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        padding: const EdgeInsets.fromLTRB(AppSpace.page, AppSpace.sm, AppSpace.page, AppSpace.sm),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          border: Border(top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.4))),
+          color: colorsOf(context).bg,
+          border: Border(top: BorderSide(color: colorsOf(context).border)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -497,66 +686,40 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // 语音模式:点一下开始连续对话(免按住),再点退出
-                IconButton(
-                  tooltip: voice.active ? '退出语音模式' : '语音模式(免按住对话)',
-                  onPressed: () async {
-                    if (voice.active) {
-                      await ref.read(voiceSessionProvider.notifier).stop();
-                    } else {
-                      await _voice.stop();
-                      await ref.read(voiceSessionProvider.notifier).start();
-                    }
-                  },
-                  icon: Icon(
-                    voice.active ? Icons.mic : Icons.mic_none,
-                    color: voice.active ? theme.colorScheme.error : null,
-                  ),
+                _composerIconButton(
+                  icon: Icons.add,
+                  tooltip: '语音 / 拍照 / 相册 / 文件',
+                  onPressed: chat.generating ? null : () => _showInputActions(voice),
                 ),
-                IconButton(
-                  tooltip: '拍照',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: chat.generating ? null : _takePhoto,
-                  icon: const Icon(Icons.photo_camera_outlined),
-                ),
-                IconButton(
-                  tooltip: '相册',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: chat.generating ? null : _pickFromGallery,
-                  icon: const Icon(Icons.photo_library_outlined),
-                ),
-                IconButton(
-                  tooltip: '添加文件',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: chat.generating ? null : _pickFile,
-                  icon: const Icon(Icons.attach_file),
-                ),
+                const SizedBox(width: AppSpace.sm),
                 Expanded(
                   child: TextField(
                     controller: _input,
                     minLines: 1,
                     maxLines: 5,
                     enabled: !chat.generating,
+                    onChanged: (_) => setState(() {}),
+                    style: typeOf(context).body,
                     decoration: InputDecoration(
                       hintText: chat.generating ? '鲸灵正在回答…' : '给鲸灵发消息…',
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                chat.generating
-                    ? IconButton.filledTonal(
-                        tooltip: '停止生成',
-                        onPressed: () => ref.read(chatProvider.notifier).stop(),
-                        icon: const Icon(Icons.stop),
-                      )
-                    : IconButton.filled(
-                        tooltip: '发送',
-                        onPressed: _send,
-                        icon: const Icon(Icons.arrow_upward),
-                      ),
+                const SizedBox(width: AppSpace.sm),
+                if (chat.generating)
+                  _composerIconButton(
+                    icon: Icons.stop,
+                    tooltip: '停止生成',
+                    filled: true,
+                    onPressed: () => ref.read(chatProvider.notifier).stop(),
+                  )
+                else
+                  _composerIconButton(
+                    icon: Icons.arrow_upward,
+                    tooltip: '发送',
+                    filled: true,
+                    onPressed: _input.text.trim().isEmpty ? null : _send,
+                  ),
               ],
             ),
           ],
@@ -565,3 +728,4 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 }
+
