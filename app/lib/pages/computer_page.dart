@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/api.dart';
 import '../core/harness_providers.dart';
 import '../core/providers.dart';
+import '../design/components/empty_state.dart';
 import '../models/harness.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
@@ -322,13 +323,10 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
             ),
           ),
         if (messages.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 32),
-            child: Text(
-              '这个会话还没有可读消息。\n可以直接在下方输入任务,让电脑上的 dsh 继续。',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
+          const EmptyState(
+            icon: Icons.chat_bubble_outline,
+            title: '这个会话还没有可读消息',
+            body: '在下方输入任务,让电脑上的 dsh 继续',
           ),
         for (final message in messages) _historyBubble(message, theme),
       ],
@@ -664,3 +662,4 @@ class _ComputerPageState extends ConsumerState<ComputerPage> with WidgetsBinding
     );
   }
 }
+

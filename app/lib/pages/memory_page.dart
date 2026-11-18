@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/api.dart';
 import '../core/providers.dart';
+import '../design/components/empty_state.dart';
 import '../models/models.dart';
 
 /// M5/G2 记忆管理:查看、搜索、删除 memory 工具沉淀的个人记忆,让「AI 记住了什么」可见可控。
@@ -149,13 +150,10 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     }
     if (_items.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            '还没有保存任何记忆。\n在对话里说「记住:我喜欢喝美式」试试。',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
+        child: const EmptyState(
+          icon: Icons.psychology_outlined,
+          title: '还没有保存任何记忆',
+          body: '在对话里说「记住:我喜欢喝美式」试试',
         ),
       );
     }
@@ -199,3 +197,4 @@ class _MemoryPageState extends ConsumerState<MemoryPage> {
     );
   }
 }
+

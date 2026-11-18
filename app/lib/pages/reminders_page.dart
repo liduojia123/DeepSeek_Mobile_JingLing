@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/api.dart';
 import '../core/providers.dart';
 import '../core/reminders.dart';
+import '../design/components/empty_state.dart';
 
 /// 设置 →「提醒」:列出手机上已经排好的闹钟,可取消。
 ///
@@ -95,11 +96,10 @@ class _RemindersPageState extends ConsumerState<RemindersPage> {
                       child: Text('同步失败:$_error', style: TextStyle(color: theme.colorScheme.error)),
                     ),
                   if (_alarms.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 32),
-                      child: Center(
-                        child: Text('还没有待响的提醒', style: theme.textTheme.bodyMedium),
-                      ),
+                    const EmptyState(
+                      icon: Icons.alarm,
+                      title: '还没有待响的提醒',
+                      body: '跟鲸灵说「20 分钟后提醒我关火」',
                     ),
                   for (final alarm in _alarms)
                     Card(
@@ -137,3 +137,4 @@ class _RemindersPageState extends ConsumerState<RemindersPage> {
     return '${two(at.month)}-${two(at.day)} ${two(at.hour)}:${two(at.minute)}';
   }
 }
+
