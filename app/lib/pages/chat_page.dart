@@ -548,6 +548,41 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
     );
   }
+  /// Composer 上的开关:一行小字 + 状态点,选中用品牌色,不选中用灰。
+  Widget _composerToggle(String label, bool on, ValueChanged<bool>? onChanged) {
+    final colors = colorsOf(context);
+    final type = typeOf(context);
+    return InkWell(
+      borderRadius: const BorderRadius.all(Radius.circular(AppRadius.sm)),
+      onTap: onChanged == null ? null : () => onChanged(!on),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpace.xs, horizontal: AppSpace.xs),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              on ? Icons.check_circle : Icons.circle_outlined,
+              size: 14,
+              color: onChanged == null
+                  ? colors.textMuted.withValues(alpha: 0.5)
+                  : on
+                      ? colors.accent
+                      : colors.textMuted,
+            ),
+            const SizedBox(width: AppSpace.xs),
+            Text(
+              label,
+              style: type.meta.copyWith(
+                color: on ? colors.accent : colors.textMuted,
+                fontWeight: on ? FontWeight.w500 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Composer 上的圆钮:统一 44×44、filled 时用 accent。
   Widget _composerIconButton({
     required IconData icon,
@@ -658,25 +693,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ],
                 ),
               ),
-            // 联网搜索 / 深度思考开关:按条生效,随请求下发
+            // 两个开关压成一行小字,不再用整块 chip 抢注意力(M8 §4.3)
             Row(
               children: [
-                FilterChip(
-                  label: Text('联网搜索', style: typeOf(context).meta),
-                  visualDensity: VisualDensity.compact,
-                  selected: chat.searchEnabled,
-                  onSelected: chat.generating
-                      ? null
-                      : (value) => ref.read(chatProvider.notifier).setSearchEnabled(value),
+                _composerToggle(
+                  '联网搜索',
+                  chat.searchEnabled,
+                  chat.generating ? null : (value) => ref.read(chatProvider.notifier).setSearchEnabled(value),
                 ),
-                const SizedBox(width: 8),
-                FilterChip(
-                  label: Text('深度思考', style: typeOf(context).meta),
-                  visualDensity: VisualDensity.compact,
-                  selected: chat.thinkingEnabled,
-                  onSelected: chat.generating
-                      ? null
-                      : (value) => ref.read(chatProvider.notifier).setThinkingEnabled(value),
+                const SizedBox(width: AppSpace.lg),
+                _composerToggle(
+                  '深度思考',
+                  chat.thinkingEnabled,
+                  chat.generating ? null : (value) => ref.read(chatProvider.notifier).setThinkingEnabled(value),
                 ),
                 const Spacer(),
               ],

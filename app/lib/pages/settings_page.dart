@@ -5,6 +5,7 @@ import '../core/config.dart';
 import '../core/providers.dart';
 import '../core/update.dart';
 import '../core/wait_alert.dart';
+import '../design/tokens.dart';
 import 'computer_page.dart';
 import 'devices_page.dart';
 import 'memory_page.dart';
@@ -252,7 +253,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(AppSpace.page, AppSpace.sm, AppSpace.page, AppSpace.xxxl),
         children: [
           Text('功能', style: theme.textTheme.titleSmall),
           const SizedBox(height: 4),
@@ -429,3 +430,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 }
+
+
+
