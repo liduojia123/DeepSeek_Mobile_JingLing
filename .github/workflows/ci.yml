@@ -25,9 +25,9 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22 # engines 要求 >=20.12;生产镜像用 node:24
           cache: npm
@@ -51,7 +51,7 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -62,10 +62,11 @@ jobs:
 
       # pubspec.lock 不入库(.gitignore),CI 每次按 pubspec.yaml 重新解析
       - name: 解析依赖
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: 静态分析(要求零 issue)
         run: flutter analyze
 
       - name: 组件与单元测试
         run: flutter test
+
