@@ -199,4 +199,13 @@ export const ReminderCancelEvent = z.object({
 3. **响过就删本地副本**:服务端那行会在下次补排时被 ack 成 `fired`(已过期且本地没有闹钟),不会无限重排。
 4. **精确闹钟权限**:清单同时声明 `USE_EXACT_ALARM`(Android 13+,闹钟类自动授予)与 `SCHEDULE_EXACT_ALARM`(`maxSdk=32`);被拒时只提示、不降级成不精确闹钟。
 5. **新增文件**:`server/src/time.ts`(Asia/Shanghai 格式化,不依赖容器 TZ)、`server/src/routes/reminders.ts`;`executeClientTool` 增加可选第 4 参 `{emit, conversationId}`(原有三参调用不受影响)。
-6. **测试**:server 42/42(新增 `test/reminders.test.ts` 9 条)、app 48/48(新增 `test/reminders_test.dart` 11 条)、`flutter analyze` 零 issue。
+6. **测试**:server 43/43(新增 `test/reminders.test.ts` 9 条)、app 48/48(新增 `test/reminders_test.dart` 11 条)、`flutter analyze` 零 issue。
+7. **`GET /v1/reminders` 不再按时间过滤**(2026-11-18 真机跑完补的):返回 `pending` + `scheduled` 全部,让"已经响过、但手机没来得及 ack"的行能收尾成 `fired`;否则它的状态会永远停在 `scheduled`。
+8. **两处设备侧修正**(真机第一轮暴露):
+   - 设提醒前先确认通知权限(`WaitAlert.canNotify/ensurePermission`);没权限就提示、不排闹钟 —— 否则"设了,但到点什么都不响";
+   - `listScheduled()` 以 **PendingIntent 是否还存在**(`FLAG_NO_CREATE`)为准,不再只信本地副本。重启/强停会清掉闹钟却留下副本,否则补排会误判"已排好",永远不再重排。
+9. **真机实测结论(小米 24129PN74C / HyperOS,2026-11-18)**:
+   - ✅ 模型 → `reminder_create` → SSE → 手机排闹钟:`dumpsys alarm` 出现 `RTC_WAKEUP … REMINDER_FIRE`,`window=0`、`exactAllowReason=policy_permission`;
+   - ✅ **息屏锁屏到点弹通知**:`channel=jingling_reminder`、importance=4、2 个 action、标题「鲸灵提醒」,屏幕保持 Dozing(不是全屏闹钟);
+   - ✅ 取消:系统闹钟消失 + 服务端 `cancelled`;✅ 过期未响的行被 ack 成 `fired`;
+   - ⚠️ **重启后自动重建被 MIUI 拦**:logcat `BroadcastQueueInjector: Unable to launch app com.jingling.jingling … BOOT_COMPLETED`(系统默认禁第三方自启动)。需要在「应用信息 → 自启动」允许鲸灵;没开时的退路是**打开一次 App 会自动补排**(已验证)。

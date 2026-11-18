@@ -7,6 +7,7 @@ import '../models/models.dart';
 import 'api.dart';
 import 'config.dart';
 import 'reminders.dart';
+import 'wait_alert.dart';
 
 final secureStoreProvider = Provider<SecureStore>((ref) => const SecureStore());
 
@@ -449,6 +450,16 @@ class ChatController extends Notifier<ChatState> {
     final api = ref.read(apiProvider);
     final fireMs = DateTime.tryParse(fireAt)?.millisecondsSinceEpoch;
     if (api == null || reminderId.isEmpty || fireMs == null) return;
+
+    // 没有通知权限时闹钟到点也看不见,先要权限再排(否则等于白设)
+    if (!await WaitAlert.canNotify()) {
+      await WaitAlert.ensurePermission();
+      if (!await WaitAlert.canNotify()) {
+        if (!ref.mounted) return;
+        state = state.copyWith(info: '提醒需要通知权限:请在系统设置里允许鲸灵发送通知');
+        return;
+      }
+    }
 
     final ok = await RemindersChannel.schedule(id: reminderId, text: text, fireAtMs: fireMs);
     if (!ref.mounted) return;

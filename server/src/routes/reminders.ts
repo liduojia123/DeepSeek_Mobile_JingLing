@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ApiError } from '../auth.js';
 import type { Db } from '../db.js';
-import { nowIso } from '../db.js';
 
 const ListQuery = z.object({
   status: z.enum(['active']).optional(),
@@ -48,15 +47,17 @@ export function registerReminderRoutes(app: FastifyInstance, ctx: { db: Db }): v
   app.get('/v1/reminders', async (request) => {
     const parsed = ListQuery.safeParse(request.query);
     if (!parsed.success) throw new ApiError(400, 'validation_error', 'status 只支持 active');
-    const now = nowIso();
+    // 不过滤时间:pending(还没排进手机)和 scheduled(排过)都要回给手机,
+    // 由手机判断"本地有没有闹钟、是不是已经过期",过期的那条会被 ack 成 fired,
+    // 否则 status 会永远停在 scheduled。
     const rows = db
       .prepare(
         `SELECT id, conversation_id, text, fire_at, status, native_alarm_id, created_at
            FROM reminder
-          WHERE status IN ('pending','scheduled') AND fire_at > ?
+          WHERE status IN ('pending','scheduled')
           ORDER BY fire_at ASC`,
       )
-      .all(now) as ReminderRow[];
+      .all() as ReminderRow[];
     return { reminders: rows.map(toDto) };
   });
 

@@ -43,9 +43,24 @@ object ReminderScheduler {
             val item = json.optJSONObject(id) ?: continue
             val fireAt = item.optLong("fire_at_ms", 0L)
             if (fireAt <= nowMs) continue
+            // 重启/强停会清掉闹钟但留下副本;这里以"系统里还挂着没有"为准,
+            // 否则补排会误以为已排好而永远不再重排。
+            if (!isScheduled(context, id)) continue
             out += Scheduled(id, item.optString("text"), fireAt)
         }
         return out.sortedBy { it.fireAtMs }
+    }
+
+    /** 系统里这个 id 的闹钟是否还挂着(PendingIntent 是否存在)。 */
+    fun isScheduled(context: Context, id: String): Boolean {
+        val intent = Intent(context, ReminderReceiver::class.java).apply { action = ACTION_FIRE }
+        val pending = PendingIntent.getBroadcast(
+            context,
+            id.hashCode(),
+            intent,
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return pending != null
     }
 
     fun canScheduleExact(context: Context): Boolean {
@@ -102,11 +117,30 @@ object ReminderScheduler {
 
     /** 开机后按本地副本重建(只重建还没到点的)。 */
     fun rescheduleAll(context: Context) {
-        for (item in listScheduled(context)) {
+        val now = System.currentTimeMillis()
+        for (item in rawFuture(context, now)) {
             schedule(context, item.id, item.text, item.fireAtMs)
         }
-        // 清掉已过期的副本
-        val alive = listScheduled(context).map { it.id }.toSet()
+        prune(context, now)
+    }
+
+    /** 副本里所有"还没到点"的条目(不校验闹钟是否还挂着,开机重建用)。 */
+    private fun rawFuture(context: Context, nowMs: Long): List<Scheduled> {
+        val raw = prefs(context).getString(KEY_ALARMS, null) ?: return emptyList()
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyList()
+        val out = mutableListOf<Scheduled>()
+        for (id in json.keys()) {
+            val item = json.optJSONObject(id) ?: continue
+            val fireAt = item.optLong("fire_at_ms", 0L)
+            if (fireAt <= nowMs) continue
+            out += Scheduled(id, item.optString("text"), fireAt)
+        }
+        return out
+    }
+
+    /** 丢掉副本里已经过期的条目。 */
+    private fun prune(context: Context, nowMs: Long) {
+        val alive = rawFuture(context, nowMs).map { it.id }.toSet()
         val raw = prefs(context).getString(KEY_ALARMS, null) ?: return
         val json = runCatching { JSONObject(raw) }.getOrNull() ?: return
         val next = JSONObject()

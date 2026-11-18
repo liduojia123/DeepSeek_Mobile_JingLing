@@ -5,8 +5,8 @@
 
 ## 一、版本与发布
 
-- App 版本:**1.2.0+14**(versionCode=14)
-- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.2.0)
+- App 版本:**1.3.0+15**(versionCode=15)
+- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.3.0)
 - 服务器 OTA:`/opt/jingling/data/app/jingling.apk` + `release.json`(version_code 必须递增)
 - 手机端「设置 → 更新来源」可选 **自己的服务器 / GitHub Releases**;「检查更新」按所选来源比对
 - 发布纪律见 `AGENTS.md`「发布纪律」:改版本号 → 测试 → 构建 → commit/push → `gh release create` → 同步服务器 OTA
@@ -27,6 +27,7 @@
 | v1.1.0 会话级桥接 | ✅ 手机进电脑上同一个 dsh 会话:同一份历史+实时、跑的时候「插话」、结束「接着说」、手机新建会话、断线按 seq 续传 |
 | v1.1.1 检查更新修复 | ✅ 「检查更新」不再静默失败:区分有新版本/已是最新/查询失败,失败弹窗带原因+当前版本+来源;GitHub 侧补超时/限流/无资产原因 |
 | v1.2.0 等待期通知(M3.6) | ✅ 派任务/等会话时通知栏常驻「正在等电脑」;跑完/出错/电脑断线在后台发通知;需要确认的操作也提醒;结束即停服务,不做常驻后台 |
+| v1.3.0 手机原生提醒(M7) | ✅ 说「20 分钟后提醒我」→ 手机系统精确闹钟,锁屏息屏到点弹通知(稍后 10 分钟/完成);`reminder_cancel`/`reminder_list` 可用;设置→提醒 可查看/取消;重启后靠自启动权限自动重建,否则打开 App 补排 |
 
 ## 三、下一步候选(按建议顺序)
 
@@ -35,7 +36,7 @@
    - ✅ 前台等结束 → 只停服务、**不发**通知
    - ⏳ **锁屏专属**未验:adb 熄屏后小米 3–5s 自动亮屏(App 回到前台,本就不该响);需人工按电源键锁屏后别碰手机再试
    - ⏳ **断线通知**未验:需要断开桥接(关 dsh 会连带杀掉本机正在做验收的 AI 会话),仅单元测试覆盖
-2. **手机原生提醒(v1.5,当前任务)**:让 agent 的「提醒我 8 点开会」真的落到系统日历/闹钟;设计先出施工单再动手
+2. **手机原生提醒(v1.3.0,已交付)**:真机验收已在小米 24129PN74C 上完成(见 `docs/HANDOFF-M7.md` §7.9);剩余可选:在设备上打开「自启动」后再验一次重启自动重建
 3. ~~run_code 沙箱~~ **已砍**(2026-11-17,理由见 DESIGN §10):要"真跑代码"用 dsh 桥
 4. **个人知识库 RAG**、网页端、会话全局搜索(v2)
 
@@ -69,6 +70,8 @@
 15. 用 sealed class 的 `switch` 给 late final 局部变量赋值会触发 Dart VM linearstack 崩溃(`error: unreachable code`,Gradle 报 `compileFlutterBuildRelease` 失败)→ 改成 `if (x is …)` + 可空局部变量
 16. Android 前台服务:停服务用 `stopService`(后台 `startService` 会被限制);`onDestroy` 里要 `stopForeground` 清通知;14+ 必须声明并传入 `foregroundServiceType`;没有通知权限就别启动(否则得到"看不见的通知")
 17. 国产系统会额外限后台:收不到通知时去「应用信息 → 省电策略」设无限制 + 允许自启动(小米/HyperOS 尤其)
+18. **MIUI 默认拦第三方自启动**:重启后 `BOOT_COMPLETED` 根本进不了 App(logcat 里 `BroadcastQueueInjector: Unable to launch app ...`),提醒闹钟不会自动重建。要么在「应用信息 → 自启动」里允许鲸灵,要么靠"打开一次 App 自动补排"(已用 `FLAG_NO_CREATE` 校验真实闹钟是否存在)
+19. **清数据/重装会把通知权限重置成拒绝**:`pm clear` 后 POST_NOTIFICATIONS 变 denied,提醒和等待通知都会静默不响 → 设提醒前必须先 `canNotify()`/申请权限,别假设有权限
 
 ## 六、验证过的生产事实
 

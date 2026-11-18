@@ -163,7 +163,7 @@ test('M7 reminder_list:只返回还没响的', async () => {
   assert.match(result.summary, /1 条/);
 });
 
-test('M7 路由:GET active 同时返回 pending 与未来的 scheduled,ack 支持回写 fire_at', async () => {
+test('M7 路由:GET active 返回 pending 与 scheduled(含已过期,交给手机 ack fired)', async () => {
   const { app, db } = makeHarness();
   const pair = await app.inject({
     method: 'POST',
@@ -180,12 +180,16 @@ test('M7 路由:GET active 同时返回 pending 与未来的 scheduled,ack 支�
   db.prepare(
     "INSERT INTO reminder (id, conversation_id, text, fire_at, status, created_at) VALUES (?, 'c1', '关火', ?, 'scheduled', ?)",
   ).run(id, future, new Date().toISOString());
+  // 已经响过但手机还没 ack 的:也要返回,否则 status 永远停在 scheduled
+  db.prepare(
+    "INSERT INTO reminder (id, conversation_id, text, fire_at, status, created_at) VALUES ('r-old', 'c1', '过期', ?, 'scheduled', ?)",
+  ).run(inMinutes(-30), new Date().toISOString());
 
   const listed = await app.inject({ method: 'GET', url: '/v1/reminders?status=active', headers });
   assert.equal(listed.statusCode, 200, listed.payload);
   const body = listed.json() as { reminders: Array<{ id: string; fire_at: string }> };
-  assert.equal(body.reminders.length, 1);
-  assert.equal(body.reminders[0]?.id, id);
+  assert.equal(body.reminders.length, 2);
+  assert.deepEqual(body.reminders.map((item) => item.id).sort(), ['r-1', 'r-old']);
 
   // 稍后 10 分钟:手机回写新时间
   const snoozedTo = new Date(Date.parse(future) + 10 * 60_000).toISOString();
