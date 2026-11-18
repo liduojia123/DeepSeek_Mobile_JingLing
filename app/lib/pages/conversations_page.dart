@@ -365,7 +365,8 @@ class _ConversationRow extends StatelessWidget {
     final type = typeOf(context);
     final colors = colorsOf(context);
     final time = conversationTimeLabel(conversation.updatedAt);
-    final preview = conversation.preview.isEmpty ? '暂无消息' : conversation.preview;
+    final rawPreview = conversation.preview.isEmpty ? '暂无消息' : conversation.preview;
+    final preview = plainPreview(rawPreview);
 
     return InkWell(
       onTap: onTap,

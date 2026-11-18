@@ -94,3 +94,12 @@ List<Conversation> filterConversations(List<Conversation> items, String query) {
 }
 
 DateTime? _parse(String value) => DateTime.tryParse(value);
+
+/// 列表预览去掉 Markdown 记号:预览是纯文本,不该看到 `**`、反引号、`#`。
+String plainPreview(String text) {
+  var out = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  out = out.replaceAllMapped(RegExp(r'!?\[([^\]]*)\]\([^)]*\)'), (match) => match[1] ?? '');
+  out = out.replaceAll(RegExp(r'[*_`>#]+'), '');
+  out = out.replaceAll(RegExp(r'^\s*[-+]\s+', multiLine: true), '');
+  return out.trim();
+}

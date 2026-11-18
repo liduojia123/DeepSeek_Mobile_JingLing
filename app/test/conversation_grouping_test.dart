@@ -105,4 +105,17 @@ void main() {
       expect(filterConversations(items, '不存在的词'), isEmpty);
     });
   });
+
+  group('预览纯文本化', () {
+    test('去掉加粗/反引号/标题/引用记号', () {
+      expect(plainPreview('根据我保存的记忆,你平时用 **DeepSeek Harness** 工具'), '根据我保存的记忆,你平时用 DeepSeek Harness 工具');
+      expect(plainPreview('# 标题'), '标题');
+      expect(plainPreview('> 引用一行'), '引用一行');
+      expect(plainPreview('跑 `npm test` 就行'), '跑 npm test 就行');
+    });
+
+    test('链接只留文字,压缩空白', () {
+      expect(plainPreview('见 [部署文档](https://example.com/a)\n\n然后'), '见 部署文档 然后');
+    });
+  });
 }

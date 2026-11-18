@@ -564,7 +564,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         minimumSize: const Size(44, 44),
         backgroundColor: filled ? colors.accent : Colors.transparent,
         foregroundColor: filled ? scheme.onPrimary : colors.textSecondary,
-        disabledBackgroundColor: filled ? colors.accent.withValues(alpha: 0.4) : Colors.transparent,
+        disabledBackgroundColor: filled ? colors.surfaceSunken : Colors.transparent,
         disabledForegroundColor: colors.textMuted,
         shape: const CircleBorder(),
       ),
@@ -662,7 +662,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             Row(
               children: [
                 FilterChip(
-                  label: const Text('联网搜索', style: TextStyle(fontSize: 11)),
+                  label: Text('联网搜索', style: typeOf(context).meta),
                   visualDensity: VisualDensity.compact,
                   selected: chat.searchEnabled,
                   onSelected: chat.generating
@@ -671,7 +671,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ),
                 const SizedBox(width: 8),
                 FilterChip(
-                  label: const Text('深度思考', style: TextStyle(fontSize: 11)),
+                  label: Text('深度思考', style: typeOf(context).meta),
                   visualDensity: VisualDensity.compact,
                   selected: chat.thinkingEnabled,
                   onSelected: chat.generating
@@ -728,4 +728,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 }
+
+
 

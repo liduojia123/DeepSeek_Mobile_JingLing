@@ -56,6 +56,9 @@ ThemeData buildAppTheme(Brightness brightness) {
     onError: colors.onAccent,
     surface: colors.surface,
     onSurface: colors.text,
+    // 用户气泡 / 选中底:用低饱和的品牌淡色,避免整屏被高饱和蓝块压住
+    primaryContainer: colors.accentSoft,
+    onPrimaryContainer: colors.text,
   );
 
   OutlineInputBorder outline(Color color, {double width = 1}) => OutlineInputBorder(
@@ -162,6 +165,19 @@ ThemeData buildAppTheme(Brightness brightness) {
       titleTextStyle: type.subtitle,
       contentTextStyle: type.body,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(AppRadius.lg))),
+    ),
+    // 选中态的 chip 用低饱和品牌淡色,不要整块高饱和蓝
+    chipTheme: ChipThemeData(
+      backgroundColor: colors.surface,
+      selectedColor: colors.accentSoft,
+      disabledColor: colors.surfaceSunken,
+      labelStyle: type.meta.copyWith(color: colors.textSecondary),
+      secondaryLabelStyle: type.meta.copyWith(color: colors.accent, fontWeight: FontWeight.w500),
+      checkmarkColor: colors.accent,
+      side: BorderSide(color: colors.border),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm, vertical: AppSpace.xs),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill))),
+      showCheckmark: true,
     ),
   );
 }
