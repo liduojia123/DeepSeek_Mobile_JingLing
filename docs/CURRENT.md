@@ -5,8 +5,8 @@
 
 ## 一、版本与发布
 
-- App 版本:**1.4.1+17**(versionCode=17)
-- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.4.1)
+- App 版本:**1.4.2+18**(versionCode=18)
+- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.4.2)
 - 服务器 OTA:`/opt/jingling/data/app/jingling.apk` + `release.json`(version_code 必须递增)
 - 手机端「设置 → 更新来源」可选 **自己的服务器 / GitHub Releases**;「检查更新」按所选来源比对
 - 发布纪律见 `AGENTS.md`「发布纪律」:改版本号 → 测试 → 构建 → commit/push → `gh release create` → 同步服务器 OTA
@@ -91,6 +91,7 @@
   - ⏳ 未验两项:**锁屏专属**(adb 熄屏后小米 3–5s 自动亮屏,App 回前台;需人工按电源键且不碰手机)、**电脑断线通知**(要断开桥接,关 dsh 会杀掉本机执行验收的 AI 会话,仅单元测试「电脑断线且正在等 → 通知」覆盖)
   - 文案与施工单不一致:HANDOFF-M3.6 写「电脑上跑完了」,实测结果是「电脑上的这一轮结束了 · 已完成」(以实测为准)
 - 2026-11-16 副作用提醒:重载插件时 dsh 会重新 apply 整个 profile,`dsh-pet` 因缺 `@electron/get` 没能重新激活(`fiberPhase=null`,`enabled=true`)。与鲸灵无关,修复方式:在 `C:\Users\liduo\.dsh\profiles\desktop` 里 `npm i @electron/get` 后再次启用 dsh-pet(或忽略,只是桌面宠物)
+
 
 
 
