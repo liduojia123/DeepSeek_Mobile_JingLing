@@ -1,5 +1,7 @@
 # 鲸灵 JingLing
 
+[![CI](https://github.com/liduojia123/DeepSeek_Mobile_JingLing/actions/workflows/ci.yml/badge.svg)](https://github.com/liduojia123/DeepSeek_Mobile_JingLing/actions/workflows/ci.yml)
+
 > 当前进度与交接见 [docs/CURRENT.md](docs/CURRENT.md);设计以 [docs/DESIGN.md](docs/DESIGN.md) 为准。
 > **部署到自己的服务器(换机器 / 别人 / 给 AI 执行)见 [docs/DEPLOY-FROM-SCRATCH.md](docs/DEPLOY-FROM-SCRATCH.md)。**
 
@@ -77,7 +79,7 @@ cd server && npm ci && npm run typecheck && npm test
 cd app && flutter pub get && flutter analyze && flutter test
 ```
 
-同样两条链(先装依赖再跑)就是发布前必须过的检查;`npm ci` 一步能同时验证 lockfile 是否可用。
+同样两条链在 CI 上跑([`.github/workflows/ci.yml`](.github/workflows/ci.yml),push / PR 都触发),所以这四行过不了就不用提 PR;`npm ci` 一步还能顺带验证 lockfile 是否可用。
 
 ## 关键约定
 
