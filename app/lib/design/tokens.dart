@@ -78,7 +78,7 @@ class AppColors {
     surfaceSunken: Color(0xFF1D2126),
     text: Color(0xFFE9EBEF),
     textSecondary: Color(0xFFA7AEBB),
-    textMuted: Color(0xFF7B828F),
+    textMuted: Color(0xFF8A93A2),
     accent: Color(0xFF7FA0FF),
     onAccent: Color(0xFF0B1020),
     accentSoft: Color(0x247FA0FF),
@@ -192,6 +192,7 @@ FontWeight _weight(int value) => switch (value) {
       600 => FontWeight.w600,
       _ => FontWeight.w700,
     };
+
 
 
 
