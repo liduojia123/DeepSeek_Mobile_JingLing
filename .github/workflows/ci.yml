@@ -1,0 +1,71 @@
+name: CI
+
+# 公开仓库的最低保证:任何 clone 下来的人,都能看到"这套代码在干净环境里能过测试"。
+# 本地对应命令(与 AGENTS.md 发布纪律一致):
+#   cd server && npm ci && npm run typecheck && npm test
+#   cd app && flutter pub get && flutter analyze && flutter test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: server (node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # engines 要求 >=20.12;生产镜像用 node:24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      # MOCK=1,不调用真实 API,不需要 DEEPSEEK_API_KEY
+      - name: 单元测试
+        run: npm test
+
+  app:
+    name: app (flutter 3.50.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          # 与 pubspec 的 Dart ^3.14 对齐;升级 Flutter 时改这里
+          flutter-version: 3.50.0
+          channel: stable
+          cache: true
+
+      # pubspec.lock 不入库(.gitignore),CI 每次按 pubspec.yaml 重新解析
+      - name: 解析依赖
+        run: flutter pub get
+
+      - name: 静态分析(要求零 issue)
+        run: flutter analyze
+
+      - name: 组件与单元测试
+        run: flutter test
