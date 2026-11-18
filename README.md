@@ -112,8 +112,9 @@ cd app && flutter pub get && flutter analyze && flutter test
 | M5 工具与用量 | ✅ 完成(memory / http_request、每日预算熔断、用量页) |
 | M6 打包发布 | ✅ 完成(release 18.3MB、应用内 OTA、服务器备份与健康检查) |
 
-测试规模:server `npm test` 34 项、app `flutter test` 37 项(以 CI 徽章为准,数字随版本变)。
+测试规模:server `npm test` 43 项、app `flutter test` 65 项(以 CI 徽章为准,数字随版本变)。
 
 ## 许可
 
 MIT,见 [`LICENSE`](LICENSE)。
+

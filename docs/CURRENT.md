@@ -46,7 +46,7 @@
 - 仓库:`D:\DPAPP`(`server/` `app/` `bridge-dsh/` `docs/` `deploy/`)
 - Flutter:`D:\dev\flutter`;JDK:`D:\dev\jdk-17`;Android SDK:`D:\dev\android-sdk`
 - 构建:`cd app; flutter build apk --release --target-platform android-arm64`
-- 测试:`cd server; npm test`(34 条)/ `cd app; flutter analyze` + `flutter test`(37 条)
+- 测试:`cd server; npm test`(43 条)/ `cd app; flutter analyze` + `flutter test`(65 条)
 - 注意:`server` 的测试入口用 tsx(会 spawn esbuild 服务进程),受限沙箱里会 EPERM,需要正常权限运行
 - 发布签名:`app/android/key.properties` + `jingling-release.jks`(均不入库)
 - **密钥/服务器凭据在仓库外**:`D:\dev\deploy\`(`keystore-info.txt`、设备令牌、发布脚本);生产 `server/.env` 在服务器 `/opt/jingling/.env`
@@ -91,4 +91,5 @@
   - ⏳ 未验两项:**锁屏专属**(adb 熄屏后小米 3–5s 自动亮屏,App 回前台;需人工按电源键且不碰手机)、**电脑断线通知**(要断开桥接,关 dsh 会杀掉本机执行验收的 AI 会话,仅单元测试「电脑断线且正在等 → 通知」覆盖)
   - 文案与施工单不一致:HANDOFF-M3.6 写「电脑上跑完了」,实测结果是「电脑上的这一轮结束了 · 已完成」(以实测为准)
 - 2026-11-16 副作用提醒:重载插件时 dsh 会重新 apply 整个 profile,`dsh-pet` 因缺 `@electron/get` 没能重新激活(`fiberPhase=null`,`enabled=true`)。与鲸灵无关,修复方式:在 `C:\Users\liduo\.dsh\profiles\desktop` 里 `npm i @electron/get` 后再次启用 dsh-pet(或忽略,只是桌面宠物)
+
 
