@@ -1,0 +1,9 @@
+Edit the reference Chinese promotional poster for 鲸灵 JingLing into a polished second version. Preserve the portrait 2:3 format, blue-and-warm-white visual identity, actual 鲸 app icon, brand wordmark, clean elegant typography, headline “你的随身精灵”, subheadline “会思考，也能动手。” and supporting line “个人专属 AI Agent · 由 DeepSeek 驱动”.
+Required changes:
+1. Remove ALL remote development content: no “远程开发”, no laptop/computer, no code editor, no project status, no tool approval cards, no device connection arc.
+2. Remove the entire “需配置自有服务器” disclaimer. Do not add any server setup text.
+3. Add very legible prominent “免费试用”. Replace top-right badge with “免费试用”, and use the large bottom cobalt CTA “立即免费试用” with a right arrow. Below CTA only show “Android”.
+4. Recompose the central product hero gracefully, with a beautifully rendered single Android phone at center-right and two understated floating feature cards to left. Cards read “联网搜索，快速找到答案” and “开口提问，轻松设提醒”. Airy pale blue wave backdrop and soft grounded studio shadow. No other devices.
+5. Replace phone UI with a simplified, convincing everyday AI chat: header “鲸灵”; a user bubble “明天早上 8 点提醒我开会”; assistant response “好的，已为你设置提醒。”; one clean reminder card with bell icon, title “开会”, time “明天 08:00”, small status “提醒已设置”. Keep the minimalist chat composer with “发消息…” and blue send arrow. All Chinese correctly spelled and highly legible.
+6. Four feature labels in clean bottom 2x2 grid: “联网搜索”, “文件问答”, “语音对话”, “智能提醒”, each paired with appropriate refined blue line icon. These replace the previous grid entirely.
+Preserve the overall level of premium realistic product advertising, restrained cobalt blue #2F5DE3, warm white #FAFAF8, charcoal typography, excellent hierarchy, generous whitespace. Finished balanced advertisement, not a wireframe. No QR code, invented URL, pricing, trial duration, store badges, watermark, or extra claims. Render all quoted Chinese verbatim.

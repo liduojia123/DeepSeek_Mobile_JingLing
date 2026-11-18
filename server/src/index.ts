@@ -34,6 +34,24 @@ export function buildApp(
 
   app.decorateRequest('deviceId', null);
 
+  // Fastify 默认对「Content-Type: application/json 但 body 为空」直接回 400。
+  // 删除类接口本来就没有 body,客户端统一带 JSON 头时就会撞上,所以空 body 当 {}。
+  // 非法 JSON 仍然报错(由下面的 errorHandler 转成 400)。
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body, done) => {
+    const raw = typeof body === 'string' ? body.trim() : '';
+    if (raw === '') return done(null, {});
+    try {
+      done(null, JSON.parse(raw) as unknown);
+    } catch {
+      // 保持"非法 JSON = 400"的老行为:默认 SyntaxError 没有 statusCode,会被 errorHandler 归成 500
+      const invalid = Object.assign(new Error('请求体不是合法 JSON'), {
+        statusCode: 400,
+        code: 'invalid_json',
+      });
+      done(invalid, undefined);
+    }
+  });
+
   // CORS 只在开发期放开(DEV_CORS,默认跟随 MOCK);生产部署必须为 0
   if (config.devCors) {
     app.addHook('onRequest', async (request, reply) => {

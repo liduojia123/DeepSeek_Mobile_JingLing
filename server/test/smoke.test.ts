@@ -1672,3 +1672,27 @@ test('普通回答不会被误标成拒答:没有 safety_block,safety 落库为 
   const assistant = findNode(detail.tree, String(events[0]!.message_id))!;
   assert.equal(assistant.safety, null);
 });
+
+test('空 JSON body 的删除请求不再 400:走鉴权而不是 Content-Type 错误', async (t) => {
+  const { app } = makeHarness();
+  t.after(() => app.close());
+  const response = await app.inject({
+    method: 'DELETE',
+    url: '/v1/conversations/whatever',
+    headers: { 'content-type': 'application/json' },
+  });
+  assert.equal(response.statusCode, 401, response.payload);
+});
+
+test('非法 JSON 仍然是 400(不是 500),空 body 当 {}', async (t) => {
+  const { app } = makeHarness();
+  t.after(() => app.close());
+  const bad = await app.inject({
+    method: 'POST',
+    url: '/v1/pair',
+    headers: { 'content-type': 'application/json' },
+    payload: '{oops',
+  });
+  assert.equal(bad.statusCode, 400, bad.payload);
+  assert.equal((bad.json() as { error: { code: string } }).error.code, 'invalid_json');
+});

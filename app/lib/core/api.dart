@@ -120,7 +120,7 @@ class ApiClient {
 
   Future<void> deleteConversation(String id) async {
     await _guard(() async {
-      final response = await _client.delete(_uri('/v1/conversations/$id'), headers: _headers());
+      final response = await _client.delete(_uri('/v1/conversations/$id'), headers: _headers(jsonContentType: false));
       _expectNoContent(response);
       return null;
     });
@@ -130,7 +130,7 @@ class ApiClient {
     await _guard(() async {
       final response = await _client.delete(
         _uri('/v1/conversations/$conversationId/messages/$messageId'),
-        headers: _headers(),
+        headers: _headers(jsonContentType: false),
       );
       _expectNoContent(response);
       return null;
@@ -249,7 +249,7 @@ class ApiClient {
   /// 吊销一台设备的令牌(立即生效,设备下次请求即 401)。
   Future<void> revokeDevice(String id) async {
     await _guard(() async {
-      final response = await _client.delete(_uri('/v1/devices/$id'), headers: _headers());
+      final response = await _client.delete(_uri('/v1/devices/$id'), headers: _headers(jsonContentType: false));
       _expectNoContent(response);
       return null;
     });
@@ -320,7 +320,7 @@ class ApiClient {
   }
 
   Future<void> deleteMemory(String id) async {
-    final response = await _guard(() => _client.delete(_uri('/v1/memories/$id'), headers: _headers()));
+    final response = await _guard(() => _client.delete(_uri('/v1/memories/$id'), headers: _headers(jsonContentType: false)));
     _decode(response);
   }
 
@@ -677,3 +677,4 @@ class ApiClient {
     }
   }
 }
+

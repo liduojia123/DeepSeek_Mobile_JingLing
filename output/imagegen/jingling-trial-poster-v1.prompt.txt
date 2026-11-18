@@ -1,0 +1,17 @@
+Use case: ads-marketing
+Create one polished Chinese promotional trial poster for the existing personal AI assistant project 鲸灵 JingLing. Portrait 2:3 layout, high resolution, professional Chinese software launch campaign. This is a trial creative, not a fictional commercial subscription product.
+
+Reference image: provided app icon is the actual brand mark, a white Chinese character 鲸 on a cobalt blue square. Preserve that icon design in a small rounded square at the top alongside brand wordmark 鲸灵 and small JingLing. Do not replace the brand mark with a whale drawing.
+
+Art direction: refined, calm, confident, beautifully typeset editorial product advertisement. Warm off-white #FAFAF8 canvas, deep charcoal #14161A typography, cobalt #2F5DE3 accents, pale icy blue atmosphere, generous negative space, sophisticated soft shadows and delicate curved blue connection lines. No purple gradients, neon cyberpunk, busy circuitry, or generic AI robots. Product's current visual language is minimalist Chinese sans-serif, Noto Sans SC inspired. Large typography and strong visual hierarchy.
+
+Composition:
+Top 8%: small brand identity left, understated outlined pill “体验版” right.
+Upper 20%: huge beautifully spaced headline on two lines, exact text “你的随身精灵” and then smaller but prominent “会思考，也能动手。”
+One short supporting line beneath: “个人专属 AI Agent · 由 DeepSeek 驱动”
+Middle 45%: elegant photorealistic thin Android phone product mockup, almost front-facing with subtle perspective, occupying center-right, and a smaller open laptop behind to left, communicating remote computer control. Phone screen must be sharp and intentionally simple: off-white interface header “鲸灵”, user bubble “帮我看看电脑上的项目进度”, response heading “远程开发”, a status card with blue dot and “正在执行”, and readable short body “实时查看输出，随时继续对话。” At bottom a minimal rounded chat composer “发消息…” with + and blue send arrow. Laptop shows a quiet dark code editor with abstract code lines, no invented readable technical claims. Subtle cobalt arc connects devices, with two restrained floating cards reading “任务进度，随时掌握” and “重要操作，由你确认”. Make all typography legible, no tiny dense fake UI. Natural elegant studio shadows anchor the devices. This is a UI concept representation, do not add fake screenshots or store logos.
+Lower 18%: a balanced grid or two clean columns of four compact features with refined thin blue icons, exact labels:
+“远程开发”   “联网搜索”
+“文件问答”   “语音与提醒”
+Bottom 9%: cobalt blue rounded CTA “即刻体验鲸灵” with arrow, and a small clear qualifier underneath “Android · 需配置自有服务器”.
+No QR code, no URL, no price, no free trial duration, no official DeepSeek affiliation implication, no iOS badge, no unimplemented image generation, no claim of fully autonomous unrestricted execution. No watermarks. Produce a fully finished cohesive poster, not a layout sheet. Render all supplied Chinese copy verbatim, correct simplified Chinese, with exceptional readability and clean kerning.
