@@ -5,8 +5,8 @@ import 'core/providers.dart';
 import 'core/reminders.dart';
 import 'core/wait_alert.dart';
 import 'design/theme.dart';
-import 'pages/home_page.dart';
 import 'pages/pair_page.dart';
+import 'pages/shell.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -75,7 +75,7 @@ class _StartupGateState extends ConsumerState<StartupGate> {
       ),
       data: (value) {
         _syncOnce(paired: value.paired);
-        return value.paired ? const HomePage() : const PairPage();
+        return value.paired ? const AppShell() : const PairPage();
       },
     );
   }

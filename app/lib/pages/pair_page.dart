@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -14,16 +15,27 @@ class PairPage extends ConsumerStatefulWidget {
 class _PairPageState extends ConsumerState<PairPage> {
   final TextEditingController _serverUrl = TextEditingController();
   final TextEditingController _code = TextEditingController();
-  final TextEditingController _deviceName = TextEditingController(text: '我的手机');
+  final TextEditingController _deviceName = TextEditingController(text: kIsWeb ? '我的电脑' : '我的手机');
   bool _busy = false;
   String? _error;
+
+  /// Web 端默认服务器地址:从当前页面来源推导(…/jingling/web/ → …/jingling),仍可手改。
+  static String? _webServerUrl() {
+    final base = Uri.base;
+    if (base.host.isEmpty) return null;
+    var path = base.path;
+    final webIndex = path.lastIndexOf('/web');
+    if (webIndex > 0) path = path.substring(0, webIndex);
+    return '${base.scheme}://${base.authority}${path == '/' ? '' : path}';
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final url = ref.read(settingsProvider).value?.serverUrl;
-      if (url != null && mounted) _serverUrl.text = url;
+      final stored = ref.read(settingsProvider).value?.serverUrl;
+      final prefill = (kIsWeb ? _webServerUrl() : null) ?? stored;
+      if (prefill != null && mounted) _serverUrl.text = prefill;
     });
   }
 

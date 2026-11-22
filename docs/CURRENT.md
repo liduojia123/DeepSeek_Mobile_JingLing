@@ -5,8 +5,9 @@
 
 ## 一、版本与发布
 
-- App 版本:**1.7.0+26**(versionCode=26)
-- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.7.0)
+- App 版本:**1.8.0+27**(versionCode=27)
+- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.8.0)
+- **Web 端**:`https://<服务器>/jingling/web/`(同一后端;宽屏双栏,窄屏单栏;服务器托管 `flutter build web` 产物于 `/opt/jingling/data/web`,`WEB_DIR=/app/data/web`)
 - 服务器 OTA:`/opt/jingling/data/app/jingling.apk` + `release.json`(version_code 必须递增)
 - 手机端「设置 → 更新来源」可选 **自己的服务器 / GitHub Releases**;「检查更新」按所选来源比对
 - 发布纪律见 `AGENTS.md`「发布纪律」:改版本号 → 测试 → 构建 → commit/push → `gh release create` → 同步服务器 OTA
@@ -37,6 +38,7 @@
 | v1.6.1 语音入口挪位 | ✅ 语音入口从「＋」菜单挪到**输入框右侧麦克风**(照用户标注):对话页点按开/关语音模式(激活时变蓝色 mic);首页点按直接进对话开语音;「＋」只剩 拍照/相册/文件 |
 | v1.6.2 键盘遮挡修复 | ✅ 修用户截图 bug:首页键盘弹起后输入区被键盘盖住——输入区从 `bottomNavigationBar` 挪进 body(`bottomNavigationBar` 不随键盘上浮),现在键盘弹起输入区/开关自动上浮 |
 | v1.7.0 声音回答移除 | ✅ 按用户决定:**删掉 TTS 声音回答,回答只出文字**。移除:自动朗读(设置项+偏好)、「朗读这条回答/朗读此回答」入口、语音模式自动播报与打断按钮、`audioplayers` 播放链路;**语音输入(麦克风/免按住连续语音)保留**,语音模式变为「语音进、文字出」;服务端 `/v1/tts` 保留备用未删 |
+| v1.8.0 Web 端(双栏) | ✅ v2 主线(`docs/HANDOFF-WEB.md`):浏览器打开 `…/jingling/web/` 即用,**宽屏双栏**(左会话栏 320px 含搜索/分组/批量管理 + 右对话区嵌套 Navigator),窄屏自动单栏;服务端 `/web/*` 静态托管(公开免鉴权,SPA 回退,路径穿越防护);Web 适配:隐藏 检查更新/更新来源/等待通知 与麦克风(语音输入 v1 不做),会话行多选加显式入口,配对页地址自动预填(从来源推导);无 CORS(同域同证书);测试 server 64 / app 81 |
 
 ## 三、下一步候选(按建议顺序)
 
@@ -55,7 +57,7 @@
 - 仓库:`D:\DPAPP`(`server/` `app/` `bridge-dsh/` `docs/` `deploy/`)
 - Flutter:`D:\dev\flutter`;JDK:`D:\dev\jdk-17`;Android SDK:`D:\dev\android-sdk`
 - 构建:`cd app; flutter build apk --release --target-platform android-arm64`
-- 测试:`cd server; npm test`(60 条)/ `cd app; flutter analyze` + `flutter test`(78 条)
+- 测试:`cd server; npm test`(64 条)/ `cd app; flutter analyze` + `flutter test`(81 条)
 - 注意:`server` 的测试入口用 tsx(会 spawn esbuild 服务进程),受限沙箱里会 EPERM,需要正常权限运行
 - 发布签名:`app/android/key.properties` + `jingling-release.jks`(均不入库)
 - **密钥/服务器凭据在仓库外**:`D:\dev\deploy\`(`keystore-info.txt`、设备令牌、发布脚本);生产 `server/.env` 在服务器 `/opt/jingling/.env`

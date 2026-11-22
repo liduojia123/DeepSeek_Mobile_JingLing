@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -361,6 +362,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               MaterialPageRoute<void>(builder: (_) => const ComputerPage()),
             ),
           ),
+          if (!kIsWeb)
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.cloud_download_outlined),
@@ -401,6 +403,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               setState(() => _updateSource = picked);
             },
           ),
+          if (!kIsWeb)
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.system_update_outlined),
@@ -426,6 +429,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               MaterialPageRoute<void>(builder: (_) => const DevicesPage()),
             ),
           ),
+          if (!kIsWeb)
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(

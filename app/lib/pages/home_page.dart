@@ -1,4 +1,5 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:material_ui/material_ui.dart';
@@ -17,8 +18,11 @@ import 'usage_page.dart';
 
 /// 输入优先首页(v1.6.0):打开就能发消息,发出去自动建会话进对话页;
 /// 历史会话收进左上角抽屉(搜索/分组/批量管理都在里面)。
+/// `wide=true` 时是 Web 双栏右栏:会话栏常驻左侧,不带抽屉。
 class HomePage extends ConsumerStatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.wide = false});
+
+  final bool wide;
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
@@ -290,16 +294,18 @@ class _HomePageState extends ConsumerState<HomePage> {
     final canSend = !_busy && (_input.text.trim().isNotEmpty || _pendingFiles.isNotEmpty);
 
     return Scaffold(
-      drawer: ConversationDrawer(
-        onOpenConversation: (conversationId, {String? focusMessageId}) {
-          Navigator.of(context).pop(); // 收起抽屉
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => ChatPage(conversationId: conversationId, focusMessageId: focusMessageId),
+      drawer: widget.wide
+          ? null
+          : ConversationDrawer(
+              onOpenConversation: (conversationId, {String? focusMessageId}) {
+                Navigator.of(context).pop(); // 收起抽屉
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ChatPage(conversationId: conversationId, focusMessageId: focusMessageId),
+                  ),
+                );
+              },
             ),
-          );
-        },
-      ),
       appBar: AppBar(
         actions: [
           IconButton(
@@ -405,11 +411,13 @@ class _HomePageState extends ConsumerState<HomePage> {
                       style: type.body,
                       decoration: InputDecoration(
                         hintText: '发消息或从「＋」开始…',
-                        suffixIcon: IconButton(
-                          tooltip: '语音模式',
-                          onPressed: _busy ? null : () => _startChat(autoStartVoice: true),
-                          icon: Icon(Icons.mic_none, size: 20, color: colors.textMuted),
-                        ),
+                        suffixIcon: kIsWeb
+                            ? null
+                            : IconButton(
+                                tooltip: '语音模式',
+                                onPressed: _busy ? null : () => _startChat(autoStartVoice: true),
+                                icon: Icon(Icons.mic_none, size: 20, color: colors.textMuted),
+                              ),
                         suffixIconConstraints: const BoxConstraints(minWidth: 40),
                       ),
                     ),

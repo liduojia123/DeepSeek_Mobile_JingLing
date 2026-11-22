@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -18,20 +19,38 @@ import 'computer_page.dart';
 
 typedef OpenConversation = void Function(String conversationId, {String? focusMessageId});
 
-/// 会话抽屉(v1.6.0):首页左上角 ≡ 拉出。
-///
-/// 内容从原会话列表页整体搬入:全局搜索(输入即搜)→ 电脑在跑横幅 →
-/// 置顶/今天/昨天/本周/更早 分组 → 长按多选 + 底部批量操作栏。
-class ConversationDrawer extends ConsumerStatefulWidget {
+/// 会话抽屉(v1.6.0):窄屏首页左上角 ≡ 拉出。
+class ConversationDrawer extends StatelessWidget {
   const ConversationDrawer({super.key, required this.onOpenConversation});
 
   final OpenConversation onOpenConversation;
 
   @override
-  ConsumerState<ConversationDrawer> createState() => _ConversationDrawerState();
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: ConversationPane(
+        onOpenConversation: onOpenConversation,
+        onClose: () => Navigator.of(context).pop(),
+      ),
+    );
+  }
 }
 
-class _ConversationDrawerState extends ConsumerState<ConversationDrawer> {
+/// 会话栏(v1.8.0):抽屉与 Web 双栏左侧共用同一份内容。
+///
+/// 全局搜索(输入即搜)→ 电脑在跑横幅 → 置顶/今天/昨天/本周/更早 分组 →
+/// 长按多选 + 底部批量操作栏。`onClose` 为空时不显示收起按钮(双栏常驻)。
+class ConversationPane extends ConsumerStatefulWidget {
+  const ConversationPane({super.key, required this.onOpenConversation, this.onClose});
+
+  final OpenConversation onOpenConversation;
+  final VoidCallback? onClose;
+
+  @override
+  ConsumerState<ConversationPane> createState() => _ConversationPaneState();
+}
+
+class _ConversationPaneState extends ConsumerState<ConversationPane> {
   final TextEditingController _search = TextEditingController();
   String _query = '';
   Timer? _debounce;
@@ -231,35 +250,34 @@ class _ConversationDrawerState extends ConsumerState<ConversationDrawer> {
     final type = typeOf(context);
     final colors = colorsOf(context);
 
-    return Drawer(
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpace.page, AppSpace.sm, AppSpace.page, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _multiSelect
-                        ? Text('已选 ${_selected.length} 个', style: type.title)
-                        : Text('会话', style: type.title),
+    return SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpace.page, AppSpace.sm, AppSpace.page, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _multiSelect
+                      ? Text('已选 ${_selected.length} 个', style: type.title)
+                      : Text('会话', style: type.title),
+                ),
+                if (_multiSelect)
+                  IconButton(
+                    tooltip: '退出多选',
+                    icon: const Icon(Icons.close),
+                    onPressed: _exitMultiSelect,
+                  )
+                else if (widget.onClose != null)
+                  IconButton(
+                    tooltip: '收起',
+                    icon: const Icon(Icons.menu_open_outlined),
+                    onPressed: widget.onClose,
                   ),
-                  if (_multiSelect)
-                    IconButton(
-                      tooltip: '退出多选',
-                      icon: const Icon(Icons.close),
-                      onPressed: _exitMultiSelect,
-                    )
-                  else
-                    IconButton(
-                      tooltip: '收起',
-                      icon: const Icon(Icons.menu_open_outlined),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                ],
-              ),
+              ],
             ),
+          ),
             _searchField(type, colors),
             if (harness.running && !_multiSelect) _computerBanner(colors, type),
             Expanded(
@@ -337,7 +355,6 @@ class _ConversationDrawerState extends ConsumerState<ConversationDrawer> {
               ),
           ],
         ),
-      ),
     );
   }
 
@@ -527,6 +544,14 @@ class _ConversationRow extends StatelessWidget {
                 ],
               ),
             ),
+            // Web 鼠标长按不可靠,给一个显式多选入口(手机继续用长按)
+            if (kIsWeb && !selectionMode)
+              IconButton(
+                tooltip: '多选',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.checklist, size: 18, color: colors.textMuted),
+                onPressed: onLongPress,
+              ),
           ],
         ),
       ),

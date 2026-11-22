@@ -14,6 +14,7 @@ import { registerReminderRoutes } from './routes/reminders.js';
 import { registerSearchRoutes } from './routes/search.js';
 import { registerUsageRoutes } from './routes/usage.js';
 import { registerVoiceRoutes } from './routes/voice.js';
+import { registerWebRoutes } from './routes/web.js';
 
 export interface AppContext {
   config: Config;
@@ -90,6 +91,9 @@ export function buildApp(
   });
 
   app.get('/health', async () => ({ ok: true, mock: config.mock }));
+
+  // v1.8.0:Web 端静态托管(公开,不鉴权;网页壳先加载才能配对)
+  registerWebRoutes(app, config);
 
   const pairing = new PairingService(config.pairingCode, { fixed: config.pairingCodeFixed });
   registerPairingRoute(app, db, pairing);

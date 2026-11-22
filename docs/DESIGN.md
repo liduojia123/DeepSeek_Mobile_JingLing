@@ -362,6 +362,8 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 
 | 2026-11-22 | **v1.7.0 声音回答(TTS 播报)整体移除**(用户拍板:「没有声音,直接删掉声音回答这个功能,只要文字回答」,不做故障排查):删除自动朗读(设置项 + `jingling.auto_speak` 偏好)、「朗读这条回答」(⋯ 菜单)与「朗读此回答」(长按菜单)、语音模式的播报阶段与「打断」、`api.synthesize` 客户端调用、`audioplayers` 播放链路(`VoiceService` 只留录音)。**语音输入全部保留**(麦克风按钮、免按住连续语音),语音模式语义变为「语音进、文字出」(`VoiceStage.speaking` 删除)。服务端 `/v1/tts` 保留备用(客户端不再调用)。回答仍全部以文字呈现,协议零改动 |
 
+| 2026-11-23 | **v1.8.0 Web 端(双栏桌面布局)**(v2 主线,施工单 `docs/HANDOFF-WEB.md`;用户在「双栏/单栏放大/分步」中选了双栏):Flutter Web 产物(实测构建一次通过)由服务端 `/web/*` 静态托管(`WEB_DIR`,公开免鉴权、SPA 回退、路径穿越防护),挂 `…/jingling/web/` 与 API 同域同证书 → **无 CORS**;宽屏 ≥1000px 双栏 = `ConversationPane` 会话栏(抽屉内容复用,`onClose` 可空)+ 右侧嵌套 Navigator(HomePage(wide)⇄ChatPage),窄屏走原单栏。Web 适配:隐藏 检查更新/更新来源/等待通知/麦克风(语音输入因录音管道依赖 dart:io 路径,v1 不做,留口子),会话行加显式「多选」入口(鼠标长按不可靠),配对页服务器地址从 `Uri.base` 推导预填。`AppShell` 断点 1000px、会话栏 320px。测试 server 64/64(新增静态托管 4 条)、app 81/81(新增壳 3 条);真机浏览器验收待做 |
+
 | 2026-11-15 | **生产环境上线**(M6 部署部分提前):后端容器化部署到腾讯云 `/opt/jingling`(Docker Compose,多阶段构建,只绑 `127.0.0.1:3001`,SQLite 挂卷);Caddy 反代对外 `https://www.example.com:8000/jingling`。**备案未下导致子域名签不出证书**(ACME 只走 80/443,TLS-ALPN 连 443、HTTP-01 连 80,均被 DNSPod 拦截),故复用 www 既有证书 + `handle_path /jingling/*` 剥前缀;备案通过后改回子域名(客户端只需改服务器地址)。同机 spendlens 不受影响。公网实测:健康检查 200、SSE 首事件 67ms(反代 `flush_interval -1` 生效)、真实 usage 落库。运维手册见 `docs/DEPLOY.md` |
 | 2026-11-15 | 配对方式定稿:**生产用固定配对码**(`PAIRING_CODE` 由 env 提供则不轮换,等同长期密码;留空仍是启动生成的一次性码)。配套给 `/v1/pair` 加失败限速(同源 60s 内错 5 次 → 429)。理由:单人自用不需要账号体系(无多用户/找回密码/权限分级),账号反而扩大攻击面;固定码解决"每次取码麻烦"。设备令牌仍是长期凭证(库里只存 sha256),账号密码登录与设备吊销留到 M5 视需要再做 |
 

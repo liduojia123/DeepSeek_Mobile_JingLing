@@ -46,6 +46,8 @@ export interface Config {
   httpAllowlist: string[];
   /** OTA 发布目录(jingling.apk + release.json) */
   appReleaseDir: string;
+  /** Web 端静态目录(v1.8.0,flutter build web 的产物);为空则 /web 路由关闭 */
+  webDir: string;
 
   // ---- M3:dsh 远程开发桥 ----
   /** 桥接令牌(与设备令牌分离);为空则桥接端点关闭 */
@@ -81,6 +83,7 @@ const EnvSchema = z.object({
   TTS_PRICE_CNY_PER_10K_CHARS: z.string().optional(),
   HTTP_ALLOWLIST: z.string().optional(),
   APP_RELEASE_DIR: z.string().optional(),
+  WEB_DIR: z.string().optional(),
   BRIDGE_TOKEN: z.string().optional(),
 });
 
@@ -150,6 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .map((entry) => entry.trim().toLowerCase())
       .filter((entry) => entry !== ''),
     appReleaseDir: e.APP_RELEASE_DIR?.trim() || './data/app',
+    webDir: e.WEB_DIR?.trim() || './web',
     bridgeToken: e.BRIDGE_TOKEN?.trim() ?? '',
   };
   if (!config.mock && config.deepseekApiKey === '') {

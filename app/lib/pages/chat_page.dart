@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -724,15 +725,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     style: typeOf(context).body,
                     decoration: InputDecoration(
                       hintText: chat.generating ? '鲸灵正在回答…' : '给鲸灵发消息…',
-                      suffixIcon: IconButton(
-                        tooltip: voice.active ? '退出语音模式' : '语音模式',
-                        onPressed: () => _toggleVoiceMode(voice),
-                        icon: Icon(
-                          voice.active ? Icons.mic : Icons.mic_none,
-                          size: 20,
-                          color: voice.active ? colorsOf(context).accent : colorsOf(context).textMuted,
-                        ),
-                      ),
+                      // Web 语音输入 v1 不做(录音管道依赖移动端临时文件),隐藏麦克风
+                      suffixIcon: kIsWeb
+                          ? null
+                          : IconButton(
+                              tooltip: voice.active ? '退出语音模式' : '语音模式',
+                              onPressed: () => _toggleVoiceMode(voice),
+                              icon: Icon(
+                                voice.active ? Icons.mic : Icons.mic_none,
+                                size: 20,
+                                color: voice.active ? colorsOf(context).accent : colorsOf(context).textMuted,
+                              ),
+                            ),
                       suffixIconConstraints: const BoxConstraints(minWidth: 40),
                     ),
                   ),
