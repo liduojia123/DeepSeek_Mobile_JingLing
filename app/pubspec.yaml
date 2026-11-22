@@ -1,13 +1,12 @@
 name: jingling
 description: "鲸灵 JingLing —— 手机瘦客户端(会话、分支、流式渲染)"
 publish_to: 'none'
-version: 1.6.2+25
+version: 1.7.0+26
 
 environment:
   sdk: ^3.14.0
 
 dependencies:
-  audioplayers: ^6.8.1
   file_picker: ^13.3.3
   flutter:
     sdk: flutter

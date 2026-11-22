@@ -1,6 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
-enum MessageMenuAction { copy, edit, regenerate, speak, delete }
+enum MessageMenuAction { copy, edit, regenerate, delete }
 
 /// 长按菜单。返回 null 表示取消。
 Future<MessageMenuAction?> showMessageMenu(
@@ -28,12 +28,7 @@ Future<MessageMenuAction?> showMessageMenu(
               subtitle: const Text('生成一条新的兄弟分支,旧回答保留'),
               onTap: () => Navigator.pop(sheetContext, MessageMenuAction.edit),
             ),
-          if (!isUser)
-            ListTile(
-              leading: const Icon(Icons.volume_up_outlined),
-              title: const Text('朗读此回答'),
-              onTap: () => Navigator.pop(sheetContext, MessageMenuAction.speak),
-            ),          if (!isUser && canRegenerate)
+          if (!isUser && canRegenerate)
             ListTile(
               leading: const Icon(Icons.refresh),
               title: const Text('重新生成'),

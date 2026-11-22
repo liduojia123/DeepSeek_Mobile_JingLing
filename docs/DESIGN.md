@@ -360,6 +360,8 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 
 | 2026-11-22 | **v1.6.0 输入优先首页**(照用户提供的截图设计,导航重排):App 打开即进首页(logo + 问候语 + 底部完整输入区),**发消息自动建会话进对话页并发出首条消息**——此前"每次都要先点新对话"的摩擦点消除;「深度思考/智能搜索」药丸开关(对应联网/思考开关)、附件(拍照/相册/文件)在首页先传随首条带走、语音模式一键进对话开聊;历史会话收进左上角抽屉(`ConversationDrawer`),全局搜索/分组/置顶/批量管理/电脑横幅原样保留;⋯ 菜单留首页顶栏。实现决策:①首页不起空会话(发送/语音才建,列表不积空壳);②ChatPage 增加 `initialText/initialFileIds/initialSearch/initialThinking/autoStartVoice` 接力参数,首条消息走既有 `chat.send` 管道(零新协议);③`app_icon.png` 首次进 pubspec assets(launcher 构建期读的图不进 APK,运行时展示需显式声明)。测试 app 78/78(新增首页冒烟 2 条);真机验收待做 |
 
+| 2026-11-22 | **v1.7.0 声音回答(TTS 播报)整体移除**(用户拍板:「没有声音,直接删掉声音回答这个功能,只要文字回答」,不做故障排查):删除自动朗读(设置项 + `jingling.auto_speak` 偏好)、「朗读这条回答」(⋯ 菜单)与「朗读此回答」(长按菜单)、语音模式的播报阶段与「打断」、`api.synthesize` 客户端调用、`audioplayers` 播放链路(`VoiceService` 只留录音)。**语音输入全部保留**(麦克风按钮、免按住连续语音),语音模式语义变为「语音进、文字出」(`VoiceStage.speaking` 删除)。服务端 `/v1/tts` 保留备用(客户端不再调用)。回答仍全部以文字呈现,协议零改动 |
+
 | 2026-11-15 | **生产环境上线**(M6 部署部分提前):后端容器化部署到腾讯云 `/opt/jingling`(Docker Compose,多阶段构建,只绑 `127.0.0.1:3001`,SQLite 挂卷);Caddy 反代对外 `https://www.example.com:8000/jingling`。**备案未下导致子域名签不出证书**(ACME 只走 80/443,TLS-ALPN 连 443、HTTP-01 连 80,均被 DNSPod 拦截),故复用 www 既有证书 + `handle_path /jingling/*` 剥前缀;备案通过后改回子域名(客户端只需改服务器地址)。同机 spendlens 不受影响。公网实测:健康检查 200、SSE 首事件 67ms(反代 `flush_interval -1` 生效)、真实 usage 落库。运维手册见 `docs/DEPLOY.md` |
 | 2026-11-15 | 配对方式定稿:**生产用固定配对码**(`PAIRING_CODE` 由 env 提供则不轮换,等同长期密码;留空仍是启动生成的一次性码)。配套给 `/v1/pair` 加失败限速(同源 60s 内错 5 次 → 429)。理由:单人自用不需要账号体系(无多用户/找回密码/权限分级),账号反而扩大攻击面;固定码解决"每次取码麻烦"。设备令牌仍是长期凭证(库里只存 sha256),账号密码登录与设备吊销留到 M5 视需要再做 |
 

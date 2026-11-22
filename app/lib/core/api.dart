@@ -385,7 +385,7 @@ class ApiClient {
         ));
     _decode(response);
   }
-  // ---------- 语音(M4) ----------
+  // ---------- 语音输入(M4;声音回答已移除,v1.7.0) ----------
 
   /// 上传 16kHz WAV → 识别文本。
   Future<String> transcribe(Uint8List wav) async {
@@ -398,16 +398,6 @@ class ApiClient {
     return (json['text'] as String?) ?? '';
   }
 
-  /// 文本 → wav 音频字节(TTS)。
-  Future<Uint8List> synthesize(String text) async {
-    final response = await _guard(() => _client.post(
-          _uri('/v1/tts'),
-          headers: _headers(),
-          body: jsonEncode({'text': text}),
-        ));
-    if (response.statusCode != 200) throw _errorFrom(response.statusCode, response.body);
-    return response.bodyBytes;
-  }
   // ---------- dsh 远程开发桥(M3) ----------
 
   Future<List<HarnessNode>> harnessNodes() async {    final json = await _guard(() async =>

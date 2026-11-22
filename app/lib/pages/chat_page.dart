@@ -7,9 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/api.dart';
-import '../core/config.dart';
 import '../core/providers.dart';
-import '../core/voice.dart';
 import '../core/voice_session.dart';
 import '../design/components/empty_state.dart';
 import '../design/theme.dart';
@@ -49,9 +47,6 @@ class ChatPage extends ConsumerStatefulWidget {
 class _ChatPageState extends ConsumerState<ChatPage> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
-  final VoiceService _voice = VoiceService();
-  bool _autoSpeak = true;
-  bool _speaking = false;
   bool _focusHandled = false;
   String? _highlightId;
 
@@ -60,9 +55,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_openWithInitial());
-    });
-    SecureStore().readAutoSpeak().then((value) {
-      if (mounted) setState(() => _autoSpeak = value);
     });
   }
 
@@ -87,7 +79,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void dispose() {
     _input.dispose();
     _scroll.dispose();
-    _voice.dispose();
     super.dispose();
   }
 
@@ -138,28 +129,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final files = ref.read(chatProvider).files;
     if (text.isEmpty && files.isEmpty) return;
     _input.clear();
-    await _voice.stop();
     await ref.read(chatProvider.notifier).send(
           text,
           fileIds: files.map((file) => file.id).toList(growable: false),
         );
-  }
-
-  /// 朗读一段文字(先停掉上一段,保证可打断)。
-  Future<void> _speak(String text) async {
-    final api = ref.read(apiProvider);
-    if (api == null || text.trim().isEmpty) return;
-    setState(() => _speaking = true);
-    try {
-      await _voice.stop();
-      final bytes = await api.synthesize(text);
-      await _voice.play(bytes);
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
-    } finally {
-      if (mounted) setState(() => _speaking = false);
-    }
   }
 
   /// 从相册多选图片 → 逐张上传解析 → 附加到当前消息。
@@ -289,8 +262,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         if (result != null && result.isNotEmpty) {
           await ref.read(chatProvider.notifier).editResend(node, result);
         }
-      case MessageMenuAction.speak:
-        await _speak(node.text);
       case MessageMenuAction.regenerate:
         await ref.read(chatProvider.notifier).regenerate(node);
       case MessageMenuAction.delete:
@@ -327,18 +298,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ..showSnackBar(SnackBar(content: Text(message)));
         ref.read(chatProvider.notifier).clearBanner();
       }
-      // 回答完成 → 自动朗读最终回答(可打断)
-      if (previous != null &&
-          previous.generating &&
-          !next.generating &&
-          next.error == null &&
-          _autoSpeak &&
-          !ref.read(voiceSessionProvider).active) {
-        final answers = (next.detail?.pathNodes ?? const <MessageNode>[])
-            .where((node) => node.isAssistant)
-            .toList(growable: false);
-        if (answers.isNotEmpty) unawaited(_speak(answers.last.text));
-      }
     });
 
     final title = chat.title ?? chat.detail?.conversation.displayTitle ?? '对话';
@@ -350,12 +309,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       appBar: AppBar(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          if (_speaking)
-            IconButton(
-              tooltip: '停止朗读',
-              onPressed: () => _voice.stop(),
-              icon: const Icon(Icons.stop_circle_outlined),
-            ),
           IconButton(
             tooltip: '更多',
             onPressed: () => _showChatMenu(chat),
@@ -377,13 +330,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  /// 对话页的「⋯」:朗读这条回答 / 重命名 / 置顶 / 删除(M8 §4.2)。
+  /// 对话页的「⋯」:重命名 / 置顶 / 删除(M8 §4.2;朗读已随声音回答移除)。
   Future<void> _showChatMenu(ChatState chat) async {
     final colors = colorsOf(context);
     final conversationId = chat.conversationId;
     final conversation = chat.detail?.conversation;
     if (conversationId == null) return;
-    final lastAnswer = _lastAssistantText(chat);
 
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -392,12 +344,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.volume_up_outlined),
-              title: const Text('朗读这条回答'),
-              enabled: lastAnswer.isNotEmpty,
-              onTap: () => Navigator.pop(sheetContext, 'speak'),
-            ),
             ListTile(
               leading: const Icon(Icons.drive_file_rename_outline),
               title: const Text('重命名'),
@@ -421,9 +367,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     final api = ref.read(apiProvider);
     switch (action) {
-      case 'speak':
-        await _speak(lastAnswer);
-        return;
       case 'rename':
         final controller = TextEditingController(text: conversation?.title ?? '');
         final title = await showDialog<String>(
@@ -479,16 +422,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
         return;
     }
-  }
-
-  /// 当前路径上最后一条有正文的助手消息。
-  String _lastAssistantText(ChatState chat) {
-    final nodes = chat.pathNodes;
-    for (var i = nodes.length - 1; i >= 0; i--) {
-      final node = nodes[i];
-      if (node.role == 'assistant' && node.text.trim().isNotEmpty) return node.text;
-    }
-    return '';
   }
 
   Widget _buildMessageList(ChatState chat, ThemeData theme) {
@@ -559,7 +492,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       VoiceStage.listening => voice.heard ? '我在听,说完停顿一下' : '我在听…请说话',
       VoiceStage.recognizing => '正在识别…',
       VoiceStage.thinking => '正在思考…',
-      VoiceStage.speaking => '正在播报,点「打断」可插话',
       VoiceStage.error => voice.error ?? '语音出错了',
       VoiceStage.idle => '',
     };
@@ -577,7 +509,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               VoiceStage.listening => Icons.mic,
               VoiceStage.recognizing => Icons.graphic_eq,
               VoiceStage.thinking => Icons.psychology_outlined,
-              VoiceStage.speaking => Icons.volume_up,
               _ => Icons.error_outline,
             },
             size: 16,
@@ -604,11 +535,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   backgroundColor: theme.colorScheme.errorContainer,
                 ),
               ),
-            ),
-          if (voice.stage == VoiceStage.speaking)
-            TextButton(
-              onPressed: () => ref.read(voiceSessionProvider.notifier).interrupt(),
-              child: const Text('打断'),
             ),
           IconButton(
             tooltip: '退出语音模式',
@@ -684,7 +610,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (voice.active) {
       await ref.read(voiceSessionProvider.notifier).stop();
     } else {
-      await _voice.stop();
       await ref.read(voiceSessionProvider.notifier).start();
     }
   }

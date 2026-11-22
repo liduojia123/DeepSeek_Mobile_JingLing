@@ -8,8 +8,8 @@ import 'api.dart';
 import 'providers.dart';
 import 'voice.dart';
 
-/// 语音会话阶段
-enum VoiceStage { idle, listening, recognizing, thinking, speaking, error }
+/// 语音会话阶段(v1.7.0 起回答只出文字,无播报阶段)
+enum VoiceStage { idle, listening, recognizing, thinking, error }
 
 class VoiceSessionState {
   const VoiceSessionState({
@@ -57,8 +57,7 @@ class VoiceSessionState {
 }
 
 /// 连续语音对话(免按住):
-/// 聆听 → 静音自动断句 → ASR → 发送 → 等回答 → TTS 播报 → 继续聆听。
-/// 播放中点击圆钮 = 打断并立刻回到聆听。
+/// 聆听 → 静音自动断句 → ASR → 发送 → 回答以文字显示 → 继续聆听。
 class VoiceSessionController extends Notifier<VoiceSessionState> {
   final VoiceService _voice = VoiceService();
   bool _active = false;
@@ -102,16 +101,8 @@ class VoiceSessionController extends Notifier<VoiceSessionState> {
     } catch (_) {
       // ignore
     }
-    await _voice.stop();
     state = const VoiceSessionState();
     _loop = null;
-  }
-
-  /// 打断播报,立即回到聆听。
-  Future<void> interrupt() async {
-    if (!_active) return;
-    await _voice.stop();
-    if (_active) unawaited(_listenOnce());
   }
 
   Future<void> _run() async {
@@ -213,20 +204,8 @@ class VoiceSessionController extends Notifier<VoiceSessionState> {
     if (answer.trim().isEmpty) {
       return;
     }
-    state = state.copyWith(stage: VoiceStage.speaking, lastAnswer: answer);
-
-    try {
-      final wav = await api.synthesize(answer);
-      if (!_active) return;
-      await _voice.play(wav);
-    } on ApiException catch (error) {
-      state = state.copyWith(stage: VoiceStage.error, error: error.message);
-      await Future<void>.delayed(const Duration(milliseconds: 800));
-    }
-    // 播报结束(或被打断)后继续聆听
-    if (_active) {
-      state = state.copyWith(stage: VoiceStage.listening);
-    }
+    // 回答以文字显示,不播报;继续聆听下一轮(v1.7.0)
+    state = state.copyWith(lastAnswer: answer);
   }
 }
 
