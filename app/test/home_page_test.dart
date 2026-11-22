@@ -16,6 +16,7 @@ void main() {
     expect(find.text('深度思考'), findsOneWidget);
     expect(find.text('智能搜索'), findsOneWidget);
     expect(find.byIcon(Icons.menu), findsOneWidget); // 左上角抽屉入口
+    expect(find.byTooltip('语音模式'), findsOneWidget); // 语音入口在输入框右侧(v1.6.1)
   });
 
   testWidgets('输入为空时发送钮禁用,输入后可用', (tester) async {

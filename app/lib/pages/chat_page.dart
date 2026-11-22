@@ -679,8 +679,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  /// 「＋」:语音模式 / 拍照 / 相册 / 文件。
-  Future<void> _showInputActions(VoiceSessionState voice) async {
+  /// 语音模式开/关(v1.6.1:入口在输入框右侧的麦克风)。
+  Future<void> _toggleVoiceMode(VoiceSessionState voice) async {
+    if (voice.active) {
+      await ref.read(voiceSessionProvider.notifier).stop();
+    } else {
+      await _voice.stop();
+      await ref.read(voiceSessionProvider.notifier).start();
+    }
+  }
+
+  /// 「＋」:拍照 / 相册 / 文件(语音已挪到输入框右侧)。
+  Future<void> _showInputActions() async {
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -688,12 +698,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: Icon(voice.active ? Icons.mic : Icons.mic_none),
-              title: Text(voice.active ? '退出语音模式' : '语音模式'),
-              subtitle: Text(voice.active ? '当前正在连续对话' : '免按住,说完自动识别'),
-              onTap: () => Navigator.pop(sheetContext, 'voice'),
-            ),
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
               title: const Text('拍照'),
@@ -715,14 +719,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
     if (!mounted || action == null) return;
     switch (action) {
-      case 'voice':
-        if (voice.active) {
-          await ref.read(voiceSessionProvider.notifier).stop();
-        } else {
-          await _voice.stop();
-          await ref.read(voiceSessionProvider.notifier).start();
-        }
-        return;
       case 'photo':
         await _takePhoto();
         return;
@@ -789,8 +785,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               children: [
                 _composerIconButton(
                   icon: Icons.add,
-                  tooltip: '语音 / 拍照 / 相册 / 文件',
-                  onPressed: chat.generating ? null : () => _showInputActions(voice),
+                  tooltip: '拍照 / 相册 / 文件',
+                  onPressed: chat.generating ? null : () => _showInputActions(),
                 ),
                 const SizedBox(width: AppSpace.sm),
                 Expanded(
@@ -803,6 +799,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     style: typeOf(context).body,
                     decoration: InputDecoration(
                       hintText: chat.generating ? '鲸灵正在回答…' : '给鲸灵发消息…',
+                      suffixIcon: IconButton(
+                        tooltip: voice.active ? '退出语音模式' : '语音模式',
+                        onPressed: () => _toggleVoiceMode(voice),
+                        icon: Icon(
+                          voice.active ? Icons.mic : Icons.mic_none,
+                          size: 20,
+                          color: voice.active ? colorsOf(context).accent : colorsOf(context).textMuted,
+                        ),
+                      ),
+                      suffixIconConstraints: const BoxConstraints(minWidth: 40),
                     ),
                   ),
                 ),

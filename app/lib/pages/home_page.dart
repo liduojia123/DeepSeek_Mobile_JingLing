@@ -157,7 +157,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
-  /// 「＋」:语音模式(直接进对话开聊)/ 拍照 / 相册 / 文件。
+  /// 「＋」:拍照 / 相册 / 文件(语音在输入框右侧的麦克风)。
   Future<void> _showInputActions() async {
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -166,12 +166,6 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.mic_none),
-              title: const Text('语音模式'),
-              subtitle: const Text('免按住,说完自动识别'),
-              onTap: () => Navigator.pop(sheetContext, 'voice'),
-            ),
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
               title: const Text('拍照'),
@@ -193,8 +187,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
     if (!mounted || action == null) return;
     switch (action) {
-      case 'voice':
-        await _startChat(autoStartVoice: true);
       case 'photo':
         await _takePhoto();
       case 'gallery':
@@ -406,7 +398,15 @@ class _HomePageState extends ConsumerState<HomePage> {
                       maxLines: 5,
                       onChanged: (_) => setState(() {}),
                       style: type.body,
-                      decoration: const InputDecoration(hintText: '发消息或从「＋」开始…'),
+                      decoration: InputDecoration(
+                        hintText: '发消息或从「＋」开始…',
+                        suffixIcon: IconButton(
+                          tooltip: '语音模式',
+                          onPressed: _busy ? null : () => _startChat(autoStartVoice: true),
+                          icon: Icon(Icons.mic_none, size: 20, color: colors.textMuted),
+                        ),
+                        suffixIconConstraints: const BoxConstraints(minWidth: 40),
+                      ),
                     ),
                   ),
                   const SizedBox(width: AppSpace.sm),
