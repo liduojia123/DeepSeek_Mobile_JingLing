@@ -82,17 +82,6 @@ String conversationTimeLabel(String updatedAt, {DateTime? now}) {
   return '${at.year}-${two(at.month)}-${two(at.day)}';
 }
 
-/// 搜索:标题或预览包含关键词(不区分大小写)。空查询返回原列表。
-List<Conversation> filterConversations(List<Conversation> items, String query) {
-  final needle = query.trim().toLowerCase();
-  if (needle.isEmpty) return items;
-  return items
-      .where((item) =>
-          item.displayTitle.toLowerCase().contains(needle) ||
-          item.preview.toLowerCase().contains(needle))
-      .toList(growable: false);
-}
-
 DateTime? _parse(String value) => DateTime.tryParse(value);
 
 /// 列表预览去掉 Markdown 记号:预览是纯文本,不该看到 `**`、反引号、`#`。

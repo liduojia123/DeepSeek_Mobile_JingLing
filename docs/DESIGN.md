@@ -78,10 +78,10 @@ DeepSeek 有 Messages / Responses / Chat Completions 三种接口,后端统一�
 ### v2 — P2(架构预留)
 
 - 网页端客户端(复用同一后端)
-- 全局对话搜索 / 文件夹
+- 全局对话搜索 ✅(v1.5.0,2026-11-22 交付;**文件夹**未做)
 - 手机原生工具桥:日历、闹钟、剪贴板、系统通知 + 推送提醒(FCM/APNs)
 - 个人知识库 RAG(文档长期沉淀 + 检索)
-- 连续语音对话(免按住)
+- 连续语音对话(免按住)✅(M4 已交付:聊天页内联连续语音、VAD 断句、自动播报)
 
 ### 明确暂不做(2026-11-14 拍板)
 
@@ -353,6 +353,8 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 | 2026-11-15 | **M2 完成**:联网搜索与读链接(服务端工具由 DeepSeek 执行)、搜索/打开网页过程卡片(可展开来源列表)、正文引用角标 `[n]` + 引用列表、文件输入(PDF/Office/图片,`POST /v1/files` 转发 Files API → 对话里以 `file` 块引用)、输入命中审核 → `safety_block`、服务端生成会话标题、usage 按 `model/search/fetch` 分类。**真 key 硬指标实测**:读链接→1 张打开网页卡片 + 1 条引用 + `fetch_calls=1`;联网搜索→5 张卡片(含 14 条搜索结果)+3 条引用 + `search_calls=2`;上传 PDF→答出文档内暗号。`npm test` 20/20、`flutter test` 11/11、`flutter analyze` 0 问题。**真机(小米)复验**:配对 → 上传 191KB PDF(application/octet-stream,按扩展名+上游解析兜底成功)→ 文档问答返回结构化总结(2 条工具留痕 / 2 条引用 / 2321 tokens) |
 | 2026-11-15 | **M2 实测坑(重要)**:①Chat Completions 里文件内容块是 `{type:"file",file_id}`(官方文档主体写的是 Messages 的 `document`,照抄会 422);②服务端转发文件时**必须 `Uint8Array.from(buffer)`**,直接 `new Uint8Array(buffer)` 会把 Node 8KB 共享内存池当成文件内容上传,表现为模型回答“文档内容为空”(曾一度误判为“思考模式与文件不兼容”,修正后 thinking+文件正常);③工具计费按查询词条数/成功网页数计次,写入 `usage_log` 的 `search`/`fetch`;④文件解析按页计费但上游响应不含页数,`ocr` 费用暂未计入(已知限制);⑤超时/中断沿用 M0 规则:失败也落库并返回 `message_end` |
 | 2026-11-15 | M2 遗留项(backlog):文件解析费用(ocr)未记账;`deepseek_read_url` 在「思考 + 已声明 web_search」时不会被单独使用(走深度思考搜索的 open_page),该工具声明保留以备关闭思考时用;`/v1/files` 未做病毒扫描与格式深度校验(仅 MIME/扩展名 + 上游解析兜底);文件不落本地(官方不支持下载原件/解析结果) |
+
+| 2026-11-22 | **v1.5.0 会话全局搜索**(v2 主线第一项,施工单 `docs/HANDOFF-SEARCH.md`):会话列表搜索框从本地过滤升级为服务端全量历史搜索(`GET /v1/search`),搜标题 + **活跃路径**消息正文(不含 thinking、不含非活跃分支、不含临时会话),按会话分组返回,摘要 snippet 纯文本(高亮由客户端做,避免转义问题);点结果跳转 ChatPage 定位到命中消息并短暂高亮(GlobalObjectKey + ensureVisible,找不到静默停底部)。实现决策:①全表扫描 + JS 匹配而非 SQL LIKE(JSON 转义会坑 `%_"` 等关键词),性能口径与列表 preview 一致,量大再上 search_text 列/FTS5;②每组正文命中 ≤5 条、组 ≤20(limit 可调);③本地 `filterConversations` 删除(职责被取代)。测试 server 54/54(新增 9)、app 69/69(新增 7、移除 3);真机验收待做 |
 
 | 2026-11-15 | **生产环境上线**(M6 部署部分提前):后端容器化部署到腾讯云 `/opt/jingling`(Docker Compose,多阶段构建,只绑 `127.0.0.1:3001`,SQLite 挂卷);Caddy 反代对外 `https://www.example.com:8000/jingling`。**备案未下导致子域名签不出证书**(ACME 只走 80/443,TLS-ALPN 连 443、HTTP-01 连 80,均被 DNSPod 拦截),故复用 www 既有证书 + `handle_path /jingling/*` 剥前缀;备案通过后改回子域名(客户端只需改服务器地址)。同机 spendlens 不受影响。公网实测:健康检查 200、SSE 首事件 67ms(反代 `flush_interval -1` 生效)、真实 usage 落库。运维手册见 `docs/DEPLOY.md` |
 | 2026-11-15 | 配对方式定稿:**生产用固定配对码**(`PAIRING_CODE` 由 env 提供则不轮换,等同长期密码;留空仍是启动生成的一次性码)。配套给 `/v1/pair` 加失败限速(同源 60s 内错 5 次 → 429)。理由:单人自用不需要账号体系(无多用户/找回密码/权限分级),账号反而扩大攻击面;固定码解决"每次取码麻烦"。设备令牌仍是长期凭证(库里只存 sha256),账号密码登录与设备吊销留到 M5 视需要再做 |

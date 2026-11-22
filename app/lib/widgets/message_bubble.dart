@@ -96,6 +96,7 @@ class MessageBubble extends StatelessWidget {
     required this.onBranchSelected,
     required this.onLongPress,
     this.interactive = true,
+    this.highlighted = false,
   });
 
   final MessageNode node;
@@ -107,9 +108,24 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback onLongPress;
   final bool interactive;
 
+  /// 全局搜索跳转后的短暂高亮(HANDOFF-SEARCH §4.3),由上层定时熄灭。
+  final bool highlighted;
+
   @override
   Widget build(BuildContext context) {
-    return node.isUser ? _buildUser(context) : _buildAssistant(context);
+    final content = node.isUser ? _buildUser(context) : _buildAssistant(context);
+    if (!highlighted) return content;
+    final theme = Theme.of(context);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: content,
+    );
   }
 
   Widget _buildUser(BuildContext context) {

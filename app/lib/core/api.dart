@@ -324,6 +324,20 @@ class ApiClient {
     _decode(response);
   }
 
+  // ---------- 全局搜索(HANDOFF-SEARCH) ----------
+
+  /// 全量历史搜索:标题 + 活跃路径消息正文,按会话分组。
+  Future<List<SearchGroup>> search(String query, {int limit = 20}) async {
+    final json = await _guard(() async => _decode(await _client.get(
+          _uri('/v1/search', {'q': query.trim(), 'limit': '$limit'}),
+          headers: _headers(),
+        )));
+    return ((json['groups'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((item) => SearchGroup.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
+
   // ---------- 提醒(M7) ----------
 
   /// 还没落地的提醒(含 pending 与未来 scheduled),用于启动补排。

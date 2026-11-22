@@ -1,12 +1,12 @@
-# 鲸灵 · 当前状态交接(2026-11-16)
+# 鲸灵 · 当前状态交接(2026-11-22)
 
 > 新会话开工请先读:`AGENTS.md` → `docs/DESIGN.md`(权威)→ 本文件 → 相关 `docs/HANDOFF-*.md`
 > 本文件只记录「现在在哪、下一步做什么」,设计细节以 DESIGN 为准。
 
 ## 一、版本与发布
 
-- App 版本:**1.4.2+18**(versionCode=18)
-- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.4.2)
+- App 版本:**1.5.0+19**(versionCode=19)
+- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.5.0)
 - 服务器 OTA:`/opt/jingling/data/app/jingling.apk` + `release.json`(version_code 必须递增)
 - 手机端「设置 → 更新来源」可选 **自己的服务器 / GitHub Releases**;「检查更新」按所选来源比对
 - 发布纪律见 `AGENTS.md`「发布纪律」:改版本号 → 测试 → 构建 → commit/push → `gh release create` → 同步服务器 OTA
@@ -29,6 +29,7 @@
 | v1.2.0 等待期通知(M3.6) | ✅ 派任务/等会话时通知栏常驻「正在等电脑」;跑完/出错/电脑断线在后台发通知;需要确认的操作也提醒;结束即停服务,不做常驻后台 |
 | v1.3.0 手机原生提醒(M7) | ✅ 说「20 分钟后提醒我」→ 手机系统精确闹钟,锁屏息屏到点弹通知(稍后 10 分钟/完成);`reminder_cancel`/`reminder_list` 可用;设置→提醒 可查看/取消;重启后靠自启动权限自动重建,否则打开 App 补排 |
 | v1.4.0 前端重设计(M8) | ✅ 方向 A「素净」:设计令牌(色/字/距/圆角/动效)+ 内置 Noto Sans SC(界面不再跟系统字体变)+ 会话列表分组(置顶/今天/昨天/本周/更早)+ 本地搜索 + 顶栏 ＋/⋯ + 对话页 ⋯ 菜单 + 输入区「＋」收附件、发送三态 + 统一空状态;测试 65 条 |
+| v1.5.0 会话全局搜索 | ✅ v2 主线第一项(`docs/HANDOFF-SEARCH.md`):会话列表搜索框升级为**服务端全量历史搜索**(标题+活跃路径消息正文),结果按会话分组、关键词高亮摘要、点击跳到命中消息并短暂高亮;`GET /v1/search`;测试 server 54 / app 69 |
 
 ## 三、下一步候选(按建议顺序)
 
@@ -39,14 +40,15 @@
    - ⏳ **断线通知**未验:需要断开桥接(关 dsh 会连带杀掉本机正在做验收的 AI 会话),仅单元测试覆盖
 2. **手机原生提醒(v1.3.0,已交付)**:真机验收已在小米 24129PN74C 上完成(见 `docs/HANDOFF-M7.md` §7.9);剩余可选:在设备上打开「自启动」后再验一次重启自动重建
 3. ~~run_code 沙箱~~ **已砍**(2026-11-17,理由见 DESIGN §10):要"真跑代码"用 dsh 桥
-4. **个人知识库 RAG**、网页端、会话全局搜索(v2)
+4. **v2 剩余**:个人知识库 RAG、网页端、手机原生工具桥(剪贴板/日历/FCM 推送)
+5. **存量小优化(backlog)**:用量/预算按 UTC 分桶(应改 Asia/Shanghai,`usage.ts` 与 `agent/tools.ts` 两处同步)、会话列表 preview N+1、`flutter_markdown` 停维护迁 `flutter_markdown_plus`(先在分支验证)
 
 ## 四、关键路径与环境(本机)
 
 - 仓库:`D:\DPAPP`(`server/` `app/` `bridge-dsh/` `docs/` `deploy/`)
 - Flutter:`D:\dev\flutter`;JDK:`D:\dev\jdk-17`;Android SDK:`D:\dev\android-sdk`
 - 构建:`cd app; flutter build apk --release --target-platform android-arm64`
-- 测试:`cd server; npm test`(43 条)/ `cd app; flutter analyze` + `flutter test`(65 条)
+- 测试:`cd server; npm test`(54 条)/ `cd app; flutter analyze` + `flutter test`(69 条)
 - 注意:`server` 的测试入口用 tsx(会 spawn esbuild 服务进程),受限沙箱里会 EPERM,需要正常权限运行
 - 发布签名:`app/android/key.properties` + `jingling-release.jks`(均不入库)
 - **密钥/服务器凭据在仓库外**:`D:\dev\deploy\`(`keystore-info.txt`、设备令牌、发布脚本);生产 `server/.env` 在服务器 `/opt/jingling/.env`

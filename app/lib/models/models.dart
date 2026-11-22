@@ -548,3 +548,60 @@ class AppRelease {
         downloadPath: (json['download_path'] as String?) ?? '/v1/app/download',
       );
 }
+
+/// 全局搜索(HANDOFF-SEARCH)的一条命中。
+/// `field == 'title'` 时 message_id 为 null、snippet 为空;否则是正文命中。
+class SearchHit {
+  const SearchHit({
+    required this.messageId,
+    required this.field,
+    required this.role,
+    required this.createdAt,
+    required this.snippet,
+  });
+
+  final String? messageId;
+  final String field;
+  final String? role;
+  final String createdAt;
+  final String snippet;
+
+  bool get isTitleHit => field == 'title';
+
+  factory SearchHit.fromJson(Map<String, dynamic> json) => SearchHit(
+        messageId: json['message_id'] as String?,
+        field: (json['field'] as String?) ?? 'message',
+        role: json['role'] as String?,
+        createdAt: (json['created_at'] as String?) ?? '',
+        snippet: (json['snippet'] as String?) ?? '',
+      );
+}
+
+/// 全局搜索里一个会话的命中组。
+class SearchGroup {
+  const SearchGroup({
+    required this.conversationId,
+    required this.title,
+    required this.pinned,
+    required this.updatedAt,
+    required this.hits,
+  });
+
+  final String conversationId;
+  final String title;
+  final bool pinned;
+  final String updatedAt;
+  final List<SearchHit> hits;
+
+  factory SearchGroup.fromJson(Map<String, dynamic> json) {
+    final conversation = (json['conversation'] as Map?) ?? const {};
+    final hits = (json['hits'] as List?) ?? const [];
+    return SearchGroup(
+      conversationId: (conversation['id'] as String?) ?? '',
+      title: (conversation['title'] as String?) ?? '',
+      pinned: (conversation['pinned'] as bool?) ?? false,
+      updatedAt: (conversation['updated_at'] as String?) ?? '',
+      hits: hits.whereType<Map>().map((item) => SearchHit.fromJson(Map<String, dynamic>.from(item))).toList(growable: false),
+    );
+  }
+}

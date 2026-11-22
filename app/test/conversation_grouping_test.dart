@@ -86,26 +86,6 @@ void main() {
     });
   });
 
-  group('搜索', () {
-    final items = [
-      conv('1', updatedAt: now, title: 'Meraki WAN 口判断', preview: '采集器每 5 分钟轮询'),
-      conv('2', updatedAt: now, title: '部署手册', preview: 'Caddy 子域名'),
-    ];
-
-    test('标题与预览都参与匹配,不区分大小写', () {
-      expect(filterConversations(items, 'meraki').single.id, '1');
-      expect(filterConversations(items, 'caddy').single.id, '2');
-    });
-
-    test('空查询返回原列表', () {
-      expect(filterConversations(items, '   '), items);
-    });
-
-    test('无匹配返回空', () {
-      expect(filterConversations(items, '不存在的词'), isEmpty);
-    });
-  });
-
   group('预览纯文本化', () {
     test('去掉加粗/反引号/标题/引用记号', () {
       expect(plainPreview('根据我保存的记忆,你平时用 **DeepSeek Harness** 工具'), '根据我保存的记忆,你平时用 DeepSeek Harness 工具');

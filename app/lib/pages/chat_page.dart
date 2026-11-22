@@ -19,9 +19,12 @@ import '../widgets/message_bubble.dart';
 import '../widgets/message_menu.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
-  const ChatPage({super.key, required this.conversationId});
+  const ChatPage({super.key, required this.conversationId, this.focusMessageId});
 
   final String conversationId;
+
+  /// 全局搜索跳转:加载完成后滚动定位到这条消息(必须在活跃路径上)。
+  final String? focusMessageId;
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
@@ -33,6 +36,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final VoiceService _voice = VoiceService();
   bool _autoSpeak = true;
   bool _speaking = false;
+  bool _focusHandled = false;
+  String? _highlightId;
 
   @override
   void initState() {
@@ -61,6 +66,37 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,
       );
+    });
+  }
+
+  /// 全局搜索跳转(HANDOFF-SEARCH §4.3):加载完成后定位到命中消息并短暂高亮。
+  /// 消息不在活跃路径上(搜完又切了分支/已删除)就静默放弃,按原行为停底部。
+  void _tryFocus(ChatState chat) {
+    if (_focusHandled || widget.focusMessageId == null) return;
+    if (chat.loading || chat.detail == null) return;
+    _focusHandled = true;
+    final targetId = widget.focusMessageId!;
+    final onPath = chat.pathNodes.any((node) => node.id == targetId);
+    final noAnimation = MediaQuery.disableAnimationsOf(context);
+    if (!onPath) {
+      _scrollToBottom();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final targetContext = GlobalObjectKey(targetId).currentContext;
+      if (targetContext == null) return;
+      Scrollable.ensureVisible(
+        targetContext,
+        alignment: 0.3,
+        duration: noAnimation ? Duration.zero : const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+      if (noAnimation) return;
+      setState(() => _highlightId = targetId);
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        if (mounted && _highlightId == targetId) setState(() => _highlightId = null);
+      });
     });
   }
 
@@ -273,7 +309,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
 
     final title = chat.title ?? chat.detail?.conversation.displayTitle ?? '对话';
-    _scrollToBottom();
+    // 带搜索定位来的页面不再自动回底部,避免和 ensureVisible 抢滚动
+    if (widget.focusMessageId == null) _scrollToBottom();
+    _tryFocus(chat);
 
     return Scaffold(
       appBar: AppBar(
@@ -440,11 +478,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final index = siblings.indexWhere((item) => item.id == node.id);
       items.add(
         MessageBubble(
-          key: ValueKey(node.id),
+          key: GlobalObjectKey(node.id),
           node: node,
           position: index < 0 ? 1 : index + 1,
           count: siblings.length,
           interactive: !chat.generating,
+          highlighted: node.id == _highlightId,
           onBranchSelected: (selected) => _switchToSibling(siblings, selected),
           onLongPress: () => _openMenu(node),
         ),

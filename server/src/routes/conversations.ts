@@ -21,7 +21,7 @@ interface ConversationRow {
   updated_at: string;
 }
 
-interface MessageRow {
+export interface MessageRow {
   id: string;
   conversation_id: string;
   parent_id: string | null;
@@ -754,7 +754,7 @@ function parseJson<T>(raw: string, fallback: T): T {
   }
 }
 
-function blocksToText(blocksJson: string): string {
+export function blocksToText(blocksJson: string): string {
   const blocks = parseJson<Array<{ type?: string; text?: string }>>(blocksJson, []);
   return blocks
     .filter((block) => block.type === 'text' && typeof block.text === 'string')
@@ -762,7 +762,8 @@ function blocksToText(blocksJson: string): string {
     .join('');
 }
 
-/** 从叶子沿 parent 回溯,得到根→叶的展示路径。 */function activePath(rows: MessageRow[], leafId: string | null): MessageRow[] {
+/** 从叶子沿 parent 回溯,得到根→叶的展示路径(全局搜索也用它限定活跃路径)。 */
+export function activePath(rows: MessageRow[], leafId: string | null): MessageRow[] {
   if (leafId === null) return [];
   const byId = new Map(rows.map((row) => [row.id, row]));
   const path: MessageRow[] = [];

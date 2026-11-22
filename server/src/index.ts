@@ -10,6 +10,7 @@ import { registerFileRoutes } from './routes/files.js';
 import { HarnessHub, registerHarnessBridge, registerHarnessRoutes } from './routes/harness.js';
 import { registerMemoryRoutes } from './routes/memory.js';
 import { registerReminderRoutes } from './routes/reminders.js';
+import { registerSearchRoutes } from './routes/search.js';
 import { registerUsageRoutes } from './routes/usage.js';
 import { registerVoiceRoutes } from './routes/voice.js';
 
@@ -105,6 +106,7 @@ export function buildApp(
     await registerVoiceRoutes(secured, { config, db, mock: config.mock });
     registerMemoryRoutes(secured, { db });
     registerReminderRoutes(secured, { db });
+    registerSearchRoutes(secured, { db });
     registerDeviceRoutes(secured, db);
     registerAppRoutes(secured, config);
     registerHarnessRoutes(secured, harnessHub, config);
