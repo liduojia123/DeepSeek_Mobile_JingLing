@@ -318,20 +318,25 @@ class _HomePageState extends ConsumerState<HomePage> {
           const SizedBox(width: AppSpace.xs),
         ],
       ),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ClipRRect(
-              borderRadius: const BorderRadius.all(Radius.circular(AppRadius.lg)),
-              child: Image.asset('assets/icon/home_logo.png', width: 96, height: 96),
+      body: Column(
+        children: [
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.all(Radius.circular(AppRadius.lg)),
+                    child: Image.asset('assets/icon/home_logo.png', width: 96, height: 96),
+                  ),
+                  const SizedBox(height: AppSpace.lg),
+                  Text('欢迎回来,想从哪里开始?', style: type.title),
+                ],
+              ),
             ),
-            const SizedBox(height: AppSpace.lg),
-            Text('欢迎回来,想从哪里开始?', style: type.title),
-          ],
-        ),
-      ),
-      bottomNavigationBar: SafeArea(
+          ),
+          // 输入区放 body 而不是 bottomNavigationBar:后者不随键盘上浮,会被键盘盖住(v1.6.2 修)
+          SafeArea(
         top: false,
         child: Container(
           padding: const EdgeInsets.fromLTRB(AppSpace.page, AppSpace.sm, AppSpace.page, AppSpace.sm),
@@ -382,7 +387,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   IconButton(
-                    tooltip: '语音 / 拍照 / 相册 / 文件',
+                    tooltip: '拍照 / 相册 / 文件',
                     onPressed: _busy ? null : _showInputActions,
                     style: IconButton.styleFrom(
                       minimumSize: const Size(44, 44),
@@ -426,6 +431,8 @@ class _HomePageState extends ConsumerState<HomePage> {
             ],
           ),
         ),
+      ),
+      ],
       ),
     );
   }
