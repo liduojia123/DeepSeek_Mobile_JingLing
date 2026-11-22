@@ -19,12 +19,28 @@ import '../widgets/message_bubble.dart';
 import '../widgets/message_menu.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
-  const ChatPage({super.key, required this.conversationId, this.focusMessageId});
+  const ChatPage({
+    super.key,
+    required this.conversationId,
+    this.focusMessageId,
+    this.initialText,
+    this.initialFileIds,
+    this.initialSearch,
+    this.initialThinking,
+    this.autoStartVoice = false,
+  });
 
   final String conversationId;
 
   /// 全局搜索跳转:加载完成后滚动定位到这条消息(必须在活跃路径上)。
   final String? focusMessageId;
+
+  /// 首页直达(v1.6.0):打开后自动把首条消息发出去、带上附件与开关,或直接进语音模式。
+  final String? initialText;
+  final List<String>? initialFileIds;
+  final bool? initialSearch;
+  final bool? initialThinking;
+  final bool autoStartVoice;
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
@@ -43,11 +59,28 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(chatProvider.notifier).open(widget.conversationId);
+      unawaited(_openWithInitial());
     });
     SecureStore().readAutoSpeak().then((value) {
       if (mounted) setState(() => _autoSpeak = value);
     });
+  }
+
+  /// 打开会话,并处理首页带过来的首条消息 / 开关 / 语音模式(v1.6.0)。
+  Future<void> _openWithInitial() async {
+    final chat = ref.read(chatProvider.notifier);
+    await chat.open(widget.conversationId);
+    if (!mounted) return;
+    if (widget.initialSearch != null) chat.setSearchEnabled(widget.initialSearch!);
+    if (widget.initialThinking != null) chat.setThinkingEnabled(widget.initialThinking!);
+    final text = widget.initialText ?? '';
+    final fileIds = widget.initialFileIds ?? const <String>[];
+    if (text.isNotEmpty || fileIds.isNotEmpty) {
+      await chat.send(text, fileIds: fileIds);
+    }
+    if (widget.autoStartVoice && mounted) {
+      await ref.read(voiceSessionProvider.notifier).start();
+    }
   }
 
   @override

@@ -1,7 +1,7 @@
 name: jingling
 description: "鲸灵 JingLing —— 手机瘦客户端(会话、分支、流式渲染)"
 publish_to: 'none'
-version: 1.5.3+22
+version: 1.6.0+23
 
 environment:
   sdk: ^3.14.0
@@ -31,6 +31,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # v1.6.0:首页 logo 展示用(384px 小图;启动图标记只在打包期读,不进 APK,运行时要单独声明)
+  assets:
+    - assets/icon/home_logo.png
 
   # M8:内置中文字体,避免界面跟着手机系统字体变。
   # Noto Sans SC(可变字体,GB2312 全字表子集,约 3.6MB);字重靠 FontVariation 取值。

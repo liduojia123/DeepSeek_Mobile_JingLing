@@ -358,6 +358,8 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 
 | 2026-11-22 | **v1.5.3 个人 DeepSeek API Key**(设置 → 服务器 → API Key):用户可录入自己的 DeepSeek key,**只存服务端数据库**(`app_setting` 表)、接口只回尾号、不进日志;服务端所有上游调用(对话/文件/ASR/TTS)统一走 `effectiveApiKey()`:个人 key 优先、清除后回落 `server/.env`。保存前服务端拿新 key 打 `GET /models` 验真(401/403 拒绝落库,MOCK 跳过)。安全红线相应修订(见 AGENTS.md)。**范围决策**:只做 DeepSeek key,不做第三方模型接入(专有字段兼容问题见当日对话;若将来做,入口是 `UPSTREAM_COMPAT` 开关)。测试 server 60/60、app 76/76 |
 
+| 2026-11-22 | **v1.6.0 输入优先首页**(照用户提供的截图设计,导航重排):App 打开即进首页(logo + 问候语 + 底部完整输入区),**发消息自动建会话进对话页并发出首条消息**——此前"每次都要先点新对话"的摩擦点消除;「深度思考/智能搜索」药丸开关(对应联网/思考开关)、附件(拍照/相册/文件)在首页先传随首条带走、语音模式一键进对话开聊;历史会话收进左上角抽屉(`ConversationDrawer`),全局搜索/分组/置顶/批量管理/电脑横幅原样保留;⋯ 菜单留首页顶栏。实现决策:①首页不起空会话(发送/语音才建,列表不积空壳);②ChatPage 增加 `initialText/initialFileIds/initialSearch/initialThinking/autoStartVoice` 接力参数,首条消息走既有 `chat.send` 管道(零新协议);③`app_icon.png` 首次进 pubspec assets(launcher 构建期读的图不进 APK,运行时展示需显式声明)。测试 app 78/78(新增首页冒烟 2 条);真机验收待做 |
+
 | 2026-11-15 | **生产环境上线**(M6 部署部分提前):后端容器化部署到腾讯云 `/opt/jingling`(Docker Compose,多阶段构建,只绑 `127.0.0.1:3001`,SQLite 挂卷);Caddy 反代对外 `https://www.example.com:8000/jingling`。**备案未下导致子域名签不出证书**(ACME 只走 80/443,TLS-ALPN 连 443、HTTP-01 连 80,均被 DNSPod 拦截),故复用 www 既有证书 + `handle_path /jingling/*` 剥前缀;备案通过后改回子域名(客户端只需改服务器地址)。同机 spendlens 不受影响。公网实测:健康检查 200、SSE 首事件 67ms(反代 `flush_interval -1` 生效)、真实 usage 落库。运维手册见 `docs/DEPLOY.md` |
 | 2026-11-15 | 配对方式定稿:**生产用固定配对码**(`PAIRING_CODE` 由 env 提供则不轮换,等同长期密码;留空仍是启动生成的一次性码)。配套给 `/v1/pair` 加失败限速(同源 60s 内错 5 次 → 429)。理由:单人自用不需要账号体系(无多用户/找回密码/权限分级),账号反而扩大攻击面;固定码解决"每次取码麻烦"。设备令牌仍是长期凭证(库里只存 sha256),账号密码登录与设备吊销留到 M5 视需要再做 |
 

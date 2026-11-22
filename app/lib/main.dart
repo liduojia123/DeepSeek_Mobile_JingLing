@@ -5,7 +5,7 @@ import 'core/providers.dart';
 import 'core/reminders.dart';
 import 'core/wait_alert.dart';
 import 'design/theme.dart';
-import 'pages/conversations_page.dart';
+import 'pages/home_page.dart';
 import 'pages/pair_page.dart';
 
 void main() {
@@ -75,7 +75,7 @@ class _StartupGateState extends ConsumerState<StartupGate> {
       ),
       data: (value) {
         _syncOnce(paired: value.paired);
-        return value.paired ? const ConversationsPage() : const PairPage();
+        return value.paired ? const HomePage() : const PairPage();
       },
     );
   }
