@@ -93,6 +93,7 @@
   - ⏳ 未验两项:**锁屏专属**(adb 熄屏后小米 3–5s 自动亮屏,App 回前台;需人工按电源键且不碰手机)、**电脑断线通知**(要断开桥接,关 dsh 会杀掉本机执行验收的 AI 会话,仅单元测试「电脑断线且正在等 → 通知」覆盖)
   - 文案与施工单不一致:HANDOFF-M3.6 写「电脑上跑完了」,实测结果是「电脑上的这一轮结束了 · 已完成」(以实测为准)
 - 2026-11-16 副作用提醒:重载插件时 dsh 会重新 apply 整个 profile,`dsh-pet` 因缺 `@electron/get` 没能重新激活(`fiberPhase=null`,`enabled=true`)。与鲸灵无关,修复方式:在 `C:\Users\liduo\.dsh\profiles\desktop` 里 `npm i @electron/get` 后再次启用 dsh-pet(或忽略,只是桌面宠物)
+- 2026-11-22 **v1.5.0 会话全局搜索发布完毕**:GitHub Release v1.5.0(APK 22,181,795 字节,SHA-256 见 `build-release/notes-1.5.0.md`);生产已部署服务端 `/v1/search` 并重建容器(healthy);**公网实测**:搜索真实历史返回 2 个会话组(命中消息+摘要+角色/时间正确)、OTA 清单 `version_code=19` 与 APK 同尺寸、`/v1/app/download` 鉴权正常。部署方式照旧:`D:\dev\deploy` 打包 tar → pscp → `docker compose up -d --build` + 传 `jingling.apk`/`release.json` 到 `/opt/jingling/data/app/`(服务器凭据在仓库外 `生产环境.md`,**不入库**)
 
 
 
