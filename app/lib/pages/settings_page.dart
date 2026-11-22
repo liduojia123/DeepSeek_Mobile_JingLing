@@ -1,11 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../core/api.dart';
 import '../core/config.dart';
 import '../core/providers.dart';
 import '../core/update.dart';
 import '../core/wait_alert.dart';
 import '../design/tokens.dart';
+import '../models/models.dart';
 import 'computer_page.dart';
 import 'devices_page.dart';
 import 'memory_page.dart';
@@ -26,6 +28,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   bool _saving = false;
   bool _notifyAllowed = true;
   bool _autoSpeak = true;
+  ModelKeyStatus? _keyStatus;
 
   @override
   void initState() {
@@ -48,6 +51,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       WaitAlert.canNotify().then((allowed) {
         if (mounted) setState(() => _notifyAllowed = allowed);
       });
+      // v1.5.3:个人 API Key 状态;没配对或读不到都不挡设置页
+      final api = ref.read(apiProvider);
+      if (api != null) {
+        api.modelKeyStatus().then((status) {
+          if (mounted) setState(() => _keyStatus = status);
+        }).catchError((Object _) {});
+      }
     });
   }
 
@@ -63,6 +73,80 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('服务器地址已保存')));
+  }
+
+  /// v1.5.3:个人 DeepSeek API Key。key 只存服务器,这里永远只见尾号。
+  String _keyStatusText() {
+    final status = _keyStatus;
+    if (status == null) return '查看/更换对话用的 DeepSeek API Key';
+    if (status.isCustom) return '当前:用自己的 key(尾号 ${status.hint})· 点击更换或恢复默认';
+    if (status.source == 'default') return '当前:服务器默认 key(尾号 ${status.hint})· 点击改用自己的';
+    return '当前:还没有配置 key · 点击填入自己的';
+  }
+
+  Future<void> _editApiKey() async {
+    final api = ref.read(apiProvider);
+    if (api == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('还没有配对')));
+      return;
+    }
+    final controller = TextEditingController();
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('API Key'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_keyStatusText(), style: Theme.of(dialogContext).textTheme.bodySmall),
+            const SizedBox(height: AppSpace.md),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'DeepSeek API Key',
+                hintText: 'sk-…',
+                helperText: '保存前会向 DeepSeek 校验;key 只存服务器,手机里不留',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          if (_keyStatus?.isCustom == true)
+            TextButton(onPressed: () => Navigator.pop(dialogContext, 'clear'), child: const Text('恢复默认')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, 'save'), child: const Text('保存')),
+        ],
+      ),
+    );
+    final key = controller.text.trim();
+    controller.dispose();
+    if (!mounted || action == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      if (action == 'clear') {
+        await api.clearModelKey();
+      } else {
+        if (key.isEmpty) {
+          messenger.showSnackBar(const SnackBar(content: Text('key 不能为空')));
+          return;
+        }
+        await api.setModelKey(key);
+      }
+      final status = await api.modelKeyStatus();
+      if (!mounted) return;
+      setState(() => _keyStatus = status);
+      messenger.showSnackBar(
+        SnackBar(content: Text(action == 'clear' ? '已恢复服务器默认 key' : '已改用自己的 key(尾号 ${status.hint})')),
+      );
+    } on ApiException catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('保存失败:$error')));
+    }
   }
 
 
@@ -407,6 +491,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               onPressed: _saving ? null : _saveServerUrl,
               child: Text(_saving ? '保存中…' : '保存地址'),
             ),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.key_outlined),
+            title: const Text('API Key'),
+            subtitle: Text(_keyStatusText()),
+            onTap: _editApiKey,
           ),
           const Divider(height: 32),
 

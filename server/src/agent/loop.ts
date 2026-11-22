@@ -1,5 +1,6 @@
 import type { Config } from '../config.js';
 import { streamChatCompletion, UpstreamError, type ChatMessage } from '../deepseek/client.js';
+import { effectiveApiKey } from '../apikey.js';
 import type { ChatDelta, CitationPayload, DpappEvent, ToolCall, ToolCallBlock } from '../deepseek/events.js';
 import { mockStream } from '../deepseek/mock.js';
 import type { Db } from '../db.js';
@@ -191,6 +192,8 @@ export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnRe
           search: params.search,
           thinking: params.thinking,
           tools,
+          // v1.5.3:个人 key 优先(设置页录入),缺省回落 env
+          apiKey: effectiveApiKey(config, db),
         });
 
     try {

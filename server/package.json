@@ -12,7 +12,7 @@
     "start": "node dist/src/index.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test test/smoke.test.ts test/reminders.test.ts test/search.test.ts"
+    "test": "node --import tsx --test test/smoke.test.ts test/reminders.test.ts test/search.test.ts test/modelkey.test.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.8",

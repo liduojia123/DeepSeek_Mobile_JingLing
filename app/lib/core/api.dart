@@ -338,6 +338,28 @@ class ApiClient {
         .toList(growable: false);
   }
 
+  // ---------- 个人 API Key(v1.5.3) ----------
+
+  Future<ModelKeyStatus> modelKeyStatus() async {
+    final json = await _guard(() async => _decode(await _client.get(_uri('/v1/model-key'), headers: _headers())));
+    return ModelKeyStatus.fromJson(json);
+  }
+
+  Future<ModelKeyStatus> setModelKey(String apiKey) async {
+    final json = await _guard(() async => _decode(await _client.put(
+          _uri('/v1/model-key'),
+          headers: _headers(),
+          body: jsonEncode({'api_key': apiKey}),
+        )));
+    return ModelKeyStatus.fromJson(json);
+  }
+
+  Future<void> clearModelKey() async {
+    final response =
+        await _guard(() => _client.delete(_uri('/v1/model-key'), headers: _headers(jsonContentType: false)));
+    _decode(response);
+  }
+
   // ---------- 提醒(M7) ----------
 
   /// 还没落地的提醒(含 pending 与未来 scheduled),用于启动补排。

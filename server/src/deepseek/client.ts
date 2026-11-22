@@ -34,6 +34,8 @@ export interface StreamChatParams {
   thinking?: boolean;
   /** 客户端工具(OpenAI function 格式);为空则不声明 */
   tools?: Array<Record<string, unknown>>;
+  /** v1.5.3:用户个人 key(设置页录入);缺省用 config 的默认 key */
+  apiKey?: string;
 }
 
 /**
@@ -76,7 +78,7 @@ export async function* streamChatCompletion(params: StreamChatParams): AsyncGene
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
-      Authorization: `Bearer ${config.deepseekApiKey}`,
+      Authorization: `Bearer ${params.apiKey ?? config.deepseekApiKey}`,
     },
     body: JSON.stringify(body),
     signal,

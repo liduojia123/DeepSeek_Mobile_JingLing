@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '../auth.js';
+import { effectiveApiKey } from '../apikey.js';
 import type { Config } from '../config.js';
 import { nowIso, type Db } from '../db.js';
 
@@ -39,6 +40,7 @@ export interface VoiceContext {
  */
 export async function registerVoiceRoutes(app: FastifyInstance, ctx: VoiceContext): Promise<void> {
   const { config, db, mock } = ctx;
+  const apiKey = (): string => effectiveApiKey(config, db);
 
 
   const insertUsage = db.prepare(
@@ -71,7 +73,7 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: VoiceContex
     form.append('file', new Blob([new Uint8Array(buffer)]), 'speech.wav');
     const response = await fetch(`${config.deepseekBaseUrl.replace(/\/+$/, '')}/v1/tools/asr`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${config.deepseekApiKey}` },
+      headers: { Authorization: `Bearer ${apiKey()}` },
       body: form,
     });
     if (!response.ok) {
@@ -132,7 +134,7 @@ export async function registerVoiceRoutes(app: FastifyInstance, ctx: VoiceContex
     const response = await fetch(`${config.deepseekBaseUrl.replace(/\/+$/, '')}/v1/tools/tts`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.deepseekApiKey}`,
+        Authorization: `Bearer ${apiKey()}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ text, voice_id: voiceId, format: 'wav', filter_markdown: true }),

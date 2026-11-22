@@ -605,3 +605,19 @@ class SearchGroup {
     );
   }
 }
+
+/// v1.5.3:个人 DeepSeek API Key 状态。`hint` 只有尾号,服务端绝不回全文。
+class ModelKeyStatus {
+  const ModelKeyStatus({required this.source, required this.hint});
+
+  /// custom=个人 key;default=服务器默认 key;none=都没配
+  final String source;
+  final String hint;
+
+  bool get isCustom => source == 'custom';
+
+  factory ModelKeyStatus.fromJson(Map<String, dynamic> json) => ModelKeyStatus(
+        source: (json['source'] as String?) ?? 'none',
+        hint: (json['hint'] as String?) ?? '',
+      );
+}

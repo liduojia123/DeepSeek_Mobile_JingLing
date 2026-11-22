@@ -5,8 +5,8 @@
 
 ## 一、版本与发布
 
-- App 版本:**1.5.2+21**(versionCode=21)
-- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.5.2)
+- App 版本:**1.5.3+22**(versionCode=22)
+- GitHub Release:每个版本都有,标签 `v<版本>`(当前 v1.5.3)
 - 服务器 OTA:`/opt/jingling/data/app/jingling.apk` + `release.json`(version_code 必须递增)
 - 手机端「设置 → 更新来源」可选 **自己的服务器 / GitHub Releases**;「检查更新」按所选来源比对
 - 发布纪律见 `AGENTS.md`「发布纪律」:改版本号 → 测试 → 构建 → commit/push → `gh release create` → 同步服务器 OTA
@@ -32,6 +32,7 @@
 | v1.5.0 会话全局搜索 | ✅ v2 主线第一项(`docs/HANDOFF-SEARCH.md`):会话列表搜索框升级为**服务端全量历史搜索**(标题+活跃路径消息正文),结果按会话分组、关键词高亮摘要、点击跳到命中消息并短暂高亮;`GET /v1/search`;测试 server 54 / app 69 |
 | v1.5.1 应用图标换新 | ✅ 蓝底白鲸(气泡尾+星光+右下 Change 签名)替换「鲸」字图标;自适应图标底色取样 `#144DEA`,前景构图缩 80% 兜进圆形/圆角方形两种遮罩(严格 66.7% 圆遮罩下签名也完整);`flutter_launcher_icons` 重新生成全部密度 |
 | v1.5.2 会话批量管理 | ✅ 长按任意会话进入多选(行首勾选圈、顶栏「已选 N 个」+ 退出),底部操作栏 **全选/重命名(单选时)/置顶/取消置顶/删除**;删除有「N 个会话」确认弹窗;批量操作逐个调既有单条接口(服务端零改动),失败不打断其余并汇总提示;搜索态与多选互斥;测试 74 条 |
+| v1.5.3 个人 API Key | ✅ 设置 → 服务器 → **API Key**:录入自己的 DeepSeek key(保存前服务端打 `GET /models` 验真),只存服务端 `app_setting` 表、只回尾号、不进日志;对话/文件/ASR/TTS 全部走 `effectiveApiKey()`(个人 key 优先,清除回落 `.env`);安全红线口径已修订(AGENTS.md);只做 DeepSeek key,第三方模型接入明确不做(见 DESIGN §10);测试 server 60 / app 76 |
 
 ## 三、下一步候选(按建议顺序)
 
@@ -50,7 +51,7 @@
 - 仓库:`D:\DPAPP`(`server/` `app/` `bridge-dsh/` `docs/` `deploy/`)
 - Flutter:`D:\dev\flutter`;JDK:`D:\dev\jdk-17`;Android SDK:`D:\dev\android-sdk`
 - 构建:`cd app; flutter build apk --release --target-platform android-arm64`
-- 测试:`cd server; npm test`(54 条)/ `cd app; flutter analyze` + `flutter test`(74 条)
+- 测试:`cd server; npm test`(60 条)/ `cd app; flutter analyze` + `flutter test`(76 条)
 - 注意:`server` 的测试入口用 tsx(会 spawn esbuild 服务进程),受限沙箱里会 EPERM,需要正常权限运行
 - 发布签名:`app/android/key.properties` + `jingling-release.jks`(均不入库)
 - **密钥/服务器凭据在仓库外**:`D:\dev\deploy\`(`keystore-info.txt`、设备令牌、发布脚本);生产 `server/.env` 在服务器 `/opt/jingling/.env`

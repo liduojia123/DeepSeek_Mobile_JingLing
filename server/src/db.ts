@@ -139,6 +139,13 @@ CREATE TABLE IF NOT EXISTS harness_stream_event (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_stream_session_dsh
   ON harness_stream_event(session_id, dsh_seq) WHERE dsh_seq IS NOT NULL;
+
+-- v1.5.3:用户设置。目前只有个人 DeepSeek key(deepseek_api_key):
+-- value 只存服务端,任何接口只回尾号,绝不进日志或客户端。
+CREATE TABLE IF NOT EXISTS app_setting (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 /** 给既有库补列(SQLite 没有 ADD COLUMN IF NOT EXISTS)。 */

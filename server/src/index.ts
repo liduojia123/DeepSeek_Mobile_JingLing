@@ -9,6 +9,7 @@ import { registerConversationRoutes, GenerationRegistry } from './routes/convers
 import { registerFileRoutes } from './routes/files.js';
 import { HarnessHub, registerHarnessBridge, registerHarnessRoutes } from './routes/harness.js';
 import { registerMemoryRoutes } from './routes/memory.js';
+import { registerModelKeyRoutes } from './routes/modelkey.js';
 import { registerReminderRoutes } from './routes/reminders.js';
 import { registerSearchRoutes } from './routes/search.js';
 import { registerUsageRoutes } from './routes/usage.js';
@@ -107,6 +108,7 @@ export function buildApp(
     registerMemoryRoutes(secured, { db });
     registerReminderRoutes(secured, { db });
     registerSearchRoutes(secured, { db });
+    registerModelKeyRoutes(secured, { db, config });
     registerDeviceRoutes(secured, db);
     registerAppRoutes(secured, config);
     registerHarnessRoutes(secured, harnessHub, config);

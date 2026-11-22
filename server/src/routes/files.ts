@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import multipart from '@fastify/multipart';
 import type { FastifyInstance } from 'fastify';
 import { ApiError } from '../auth.js';
+import { effectiveApiKey } from '../apikey.js';
 import type { Config } from '../config.js';
 import { nowIso, type Db } from '../db.js';
 
@@ -96,7 +97,14 @@ export async function registerFileRoutes(
     if (buffer.length === 0) throw new ApiError(400, 'invalid_file', '文件内容为空');
 
     const purpose = normalizePurpose(request.query && (request.query as Record<string, unknown>).purpose, mime);
-    const providerFileId = await uploadToProvider(config, buffer, part.filename ?? 'upload', mime, purpose);
+    const providerFileId = await uploadToProvider(
+      config,
+      buffer,
+      part.filename ?? 'upload',
+      mime,
+      purpose,
+      effectiveApiKey(config, db),
+    );
 
     const id = randomUUID();
     db.prepare(
@@ -149,6 +157,7 @@ async function uploadToProvider(
   filename: string,
   mime: string,
   purpose: FilePurpose,
+  apiKey: string,
 ): Promise<string> {
   const form = new FormData();
   form.append('purpose', purpose);
@@ -159,7 +168,7 @@ async function uploadToProvider(
 
   const response = await fetch(`${config.deepseekBaseUrl.replace(/\/+$/, '')}/files`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${config.deepseekApiKey}` },
+    headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
 

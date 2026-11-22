@@ -356,6 +356,8 @@ harness_event (id, task_id, kind[output|tool_call|confirm_request|confirm_result
 
 | 2026-11-22 | **v1.5.0 会话全局搜索**(v2 主线第一项,施工单 `docs/HANDOFF-SEARCH.md`):会话列表搜索框从本地过滤升级为服务端全量历史搜索(`GET /v1/search`),搜标题 + **活跃路径**消息正文(不含 thinking、不含非活跃分支、不含临时会话),按会话分组返回,摘要 snippet 纯文本(高亮由客户端做,避免转义问题);点结果跳转 ChatPage 定位到命中消息并短暂高亮(GlobalObjectKey + ensureVisible,找不到静默停底部)。实现决策:①全表扫描 + JS 匹配而非 SQL LIKE(JSON 转义会坑 `%_"` 等关键词),性能口径与列表 preview 一致,量大再上 search_text 列/FTS5;②每组正文命中 ≤5 条、组 ≤20(limit 可调);③本地 `filterConversations` 删除(职责被取代)。测试 server 54/54(新增 9)、app 69/69(新增 7、移除 3);真机验收待做 |
 
+| 2026-11-22 | **v1.5.3 个人 DeepSeek API Key**(设置 → 服务器 → API Key):用户可录入自己的 DeepSeek key,**只存服务端数据库**(`app_setting` 表)、接口只回尾号、不进日志;服务端所有上游调用(对话/文件/ASR/TTS)统一走 `effectiveApiKey()`:个人 key 优先、清除后回落 `server/.env`。保存前服务端拿新 key 打 `GET /models` 验真(401/403 拒绝落库,MOCK 跳过)。安全红线相应修订(见 AGENTS.md)。**范围决策**:只做 DeepSeek key,不做第三方模型接入(专有字段兼容问题见当日对话;若将来做,入口是 `UPSTREAM_COMPAT` 开关)。测试 server 60/60、app 76/76 |
+
 | 2026-11-15 | **生产环境上线**(M6 部署部分提前):后端容器化部署到腾讯云 `/opt/jingling`(Docker Compose,多阶段构建,只绑 `127.0.0.1:3001`,SQLite 挂卷);Caddy 反代对外 `https://www.example.com:8000/jingling`。**备案未下导致子域名签不出证书**(ACME 只走 80/443,TLS-ALPN 连 443、HTTP-01 连 80,均被 DNSPod 拦截),故复用 www 既有证书 + `handle_path /jingling/*` 剥前缀;备案通过后改回子域名(客户端只需改服务器地址)。同机 spendlens 不受影响。公网实测:健康检查 200、SSE 首事件 67ms(反代 `flush_interval -1` 生效)、真实 usage 落库。运维手册见 `docs/DEPLOY.md` |
 | 2026-11-15 | 配对方式定稿:**生产用固定配对码**(`PAIRING_CODE` 由 env 提供则不轮换,等同长期密码;留空仍是启动生成的一次性码)。配套给 `/v1/pair` 加失败限速(同源 60s 内错 5 次 → 429)。理由:单人自用不需要账号体系(无多用户/找回密码/权限分级),账号反而扩大攻击面;固定码解决"每次取码麻烦"。设备令牌仍是长期凭证(库里只存 sha256),账号密码登录与设备吊销留到 M5 视需要再做 |
 
