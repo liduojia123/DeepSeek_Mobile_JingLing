@@ -177,3 +177,26 @@ test('账号:密码太短 400;不泄露 forgot/resend 的账号存在性', async
   assert.equal(ghostForgot.statusCode, 200);
   assert.equal((ghostForgot.json() as { debug_code?: string }).debug_code, undefined, '不存在的邮箱不给 debug_code');
 });
+
+test('账号:非 MOCK 且 SMTP 未配 → 注册 503 且不留半个账号', async () => {
+  const config: Config = {
+    ...loadConfig({ MOCK: '0', DEEPSEEK_API_KEY: 'sk-test-not-real', PAIRING_CODE } as unknown as NodeJS.ProcessEnv),
+    pairingCodeFixed: false,
+    mockDelayMs: 0,
+    logRequests: false,
+  };
+  const db = openDb(':memory:');
+  const app = buildApp({ config, db });
+
+  const response = await register(app, 'smtp@example.com');
+  assert.equal(response.statusCode, 503);
+  assert.equal(
+    (response.json() as { error: { code: string } }).error.code,
+    'mail_not_configured',
+  );
+  assert.equal(
+    (db.prepare('SELECT COUNT(1) AS n FROM user_account').get() as { n: number }).n,
+    0,
+    '发信失败不能留下账号把注册口堵死',
+  );
+});

@@ -75,8 +75,9 @@ export function registerAccountRoutes(
     if (findAccount(db, email) !== undefined) {
       throw new ApiError(409, 'account_exists', '该邮箱已注册');
     }
-    createAccount(db, email, hashPassword(parsed.data.password));
+    // 先发信再落账号:SMTP 没配好时不能留下"半个账号"把注册口堵死
     const debug = await sendCode(email, 'verify');
+    createAccount(db, email, hashPassword(parsed.data.password));
     return reply.code(201).send({ ok: true, message: '验证码已发送到邮箱,请查收后激活', ...debug });
   });
 
