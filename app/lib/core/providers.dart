@@ -12,20 +12,24 @@ import 'wait_alert.dart';
 final secureStoreProvider = Provider<SecureStore>((ref) => const SecureStore());
 
 class AppSettings {
-  const AppSettings({required this.serverUrl, required this.token});
+  const AppSettings({required this.serverUrl, required this.token, this.accountEmail});
 
   final String serverUrl;
   final String? token;
+  // v1.9.0:登录邮箱(展示用;配对模式为空)
+  final String? accountEmail;
 
   bool get paired => token != null && token!.trim().isNotEmpty;
 
-  AppSettings copyWith({String? serverUrl, String? token, bool clearToken = false}) => AppSettings(
+  AppSettings copyWith({String? serverUrl, String? token, bool clearToken = false, String? accountEmail, bool clearAccountEmail = false}) =>
+      AppSettings(
         serverUrl: serverUrl ?? this.serverUrl,
         token: clearToken ? null : (token ?? this.token),
+        accountEmail: clearAccountEmail ? null : (accountEmail ?? this.accountEmail),
       );
 }
 
-/// 启动时读本地配置;配对/解除配对/改服务器地址都在这里改状态。
+/// 启动时读本地配置;配对/登录/解除配对/改服务器地址都在这里改状态。
 class SettingsController extends AsyncNotifier<AppSettings> {
   @override
   Future<AppSettings> build() async {
@@ -33,6 +37,7 @@ class SettingsController extends AsyncNotifier<AppSettings> {
     return AppSettings(
       serverUrl: await store.readServerUrl(),
       token: await store.readToken(),
+      accountEmail: await store.readAccountEmail(),
     );
   }
 
@@ -60,9 +65,23 @@ class SettingsController extends AsyncNotifier<AppSettings> {
     }
   }
 
+  /// v1.9.0:账号登录/激活成功——存设备令牌(与配对同一套存法),并记住邮箱供设置页展示。
+  Future<void> loginWithToken(String token, {String? email}) async {
+    final store = ref.read(secureStoreProvider);
+    await store.writeToken(token);
+    if (email != null && email.trim().isNotEmpty) await store.writeAccountEmail(email);
+    final current = state.value;
+    state = AsyncData(AppSettings(
+      serverUrl: current?.serverUrl ?? await store.readServerUrl(),
+      token: token,
+      accountEmail: email ?? current?.accountEmail,
+    ));
+  }
+
   Future<void> unpair() async {
     final store = ref.read(secureStoreProvider);
     await store.writeToken(null);
+    await store.writeAccountEmail(null);
     final current = state.value;
     state = AsyncData(AppSettings(serverUrl: current?.serverUrl ?? SecureStore.defaultServerUrl, token: null));
   }

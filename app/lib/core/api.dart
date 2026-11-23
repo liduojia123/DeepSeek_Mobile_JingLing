@@ -360,6 +360,62 @@ class ApiClient {
     _decode(response);
   }
 
+  // ---------- 邮箱账号(v1.9.0) ----------
+
+  Future<AuthResult> registerAccount(String email, String password) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/auth/register'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim(), 'password': password}),
+        )));
+    return AuthResult.fromJson(json);
+  }
+
+  Future<AuthResult> verifyAccount(String email, String code, String deviceName) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/auth/verify'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim(), 'code': code.trim(), 'device_name': deviceName}),
+        )));
+    return AuthResult.fromJson(json);
+  }
+
+  Future<AuthResult> loginAccount(String email, String password, String deviceName) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/auth/login'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim(), 'password': password, 'device_name': deviceName}),
+        )));
+    return AuthResult.fromJson(json);
+  }
+
+  Future<AuthResult> resendCode(String email) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/auth/resend'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim()}),
+        )));
+    return AuthResult.fromJson(json);
+  }
+
+  Future<AuthResult> forgotPassword(String email) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/auth/forgot'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim()}),
+        )));
+    return AuthResult.fromJson(json);
+  }
+
+  Future<AuthResult> resetPassword(String email, String code, String newPassword) async {
+    final json = await _guard(() async => _decode(await _client.post(
+          _uri('/v1/auth/reset'),
+          headers: _headers(),
+          body: jsonEncode({'email': email.trim(), 'code': code.trim(), 'new_password': newPassword}),
+        )));
+    return AuthResult.fromJson(json);
+  }
+
   // ---------- 提醒(M7) ----------
 
   /// 还没落地的提醒(含 pending 与未来 scheduled),用于启动补排。

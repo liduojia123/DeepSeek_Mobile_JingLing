@@ -12,21 +12,22 @@
     "start": "node dist/src/index.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test test/smoke.test.ts test/reminders.test.ts test/search.test.ts test/modelkey.test.ts test/web.test.ts"
+    "test": "node --import tsx --test test/smoke.test.ts test/reminders.test.ts test/search.test.ts test/modelkey.test.ts test/web.test.ts test/auth.test.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.8",
     "@fastify/websocket": "^11.3.7",
     "better-sqlite3": "^13.2.0",
     "fastify": "^5.12.8",
+    "nodemailer": "^10.6.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.6",
+    "@types/nodemailer": "^8.0.2",
     "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }
 }
-

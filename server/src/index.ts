@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ApiError, PairingService, makeAuthGuard, registerDeviceRoutes, registerPairingRoute } from './auth.js';
 import { loadConfig, loadDotEnv, type Config } from './config.js';
+import { registerAccountRoutes } from './routes/account.js';
 import { DEV_CORS_HEADERS } from './cors.js';
 import { openDb, purgeEphemeral, type Db } from './db.js';
 import { registerAppRoutes } from './routes/app.js';
@@ -97,6 +98,9 @@ export function buildApp(
 
   const pairing = new PairingService(config.pairingCode, { fixed: config.pairingCodeFixed });
   registerPairingRoute(app, db, pairing);
+
+  // v1.9.0:邮箱账号(单人)。登录成功签设备令牌,与配对并存
+  registerAccountRoutes(app, { db, config });
 
   // M3:dsh 桥接(插件用 bridge token 出站接入,在设备鉴权之外)
   const harnessHub = new HarnessHub(db, config);

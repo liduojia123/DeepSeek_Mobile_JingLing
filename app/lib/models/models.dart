@@ -621,3 +621,32 @@ class ModelKeyStatus {
         hint: (json['hint'] as String?) ?? '',
       );
 }
+
+/// v1.9.0 邮箱账号:注册/激活/登录/重置的统一响应。
+/// `token` 只在登录/激活成功时出现;`debugCode` 仅 MOCK 服务端返回(开发/测试)。
+class AuthResult {
+  const AuthResult({
+    this.token,
+    this.deviceId,
+    this.deviceName,
+    this.email,
+    this.debugCode,
+    this.message,
+  });
+
+  final String? token;
+  final String? deviceId;
+  final String? deviceName;
+  final String? email;
+  final String? debugCode;
+  final String? message;
+
+  factory AuthResult.fromJson(Map<String, dynamic> json) => AuthResult(
+        token: json['token'] as String?,
+        deviceId: json['device_id'] as String?,
+        deviceName: json['device_name'] as String?,
+        email: json['email'] as String?,
+        debugCode: json['debug_code'] as String?,
+        message: json['message'] as String?,
+      );
+}

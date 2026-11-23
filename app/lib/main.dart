@@ -5,7 +5,7 @@ import 'core/providers.dart';
 import 'core/reminders.dart';
 import 'core/wait_alert.dart';
 import 'design/theme.dart';
-import 'pages/pair_page.dart';
+import 'pages/auth_page.dart';
 import 'pages/shell.dart';
 
 void main() {
@@ -46,7 +46,7 @@ class JingLingApp extends StatelessWidget {
   }
 }
 
-/// 根据本地是否已配对决定进配对页还是会话列表(声明式路由,不用手动跳转)。
+/// 根据本地是否已配对决定进登录/配对页还是主界面(声明式路由,不用手动跳转)。
 class StartupGate extends ConsumerStatefulWidget {
   const StartupGate({super.key});
 
@@ -75,7 +75,7 @@ class _StartupGateState extends ConsumerState<StartupGate> {
       ),
       data: (value) {
         _syncOnce(paired: value.paired);
-        return value.paired ? const AppShell() : const PairPage();
+        return value.paired ? const AppShell() : const AuthPage();
       },
     );
   }

@@ -49,6 +49,13 @@ export interface Config {
   /** Web 端静态目录(v1.8.0,flutter build web 的产物);为空则 /web 路由关闭 */
   webDir: string;
 
+  // ---- v1.9.0:邮箱账号(SMTP 发验证码) ----
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPass: string;
+  mailFrom: string;
+
   // ---- M3:dsh 远程开发桥 ----
   /** 桥接令牌(与设备令牌分离);为空则桥接端点关闭 */
   bridgeToken: string;
@@ -84,6 +91,11 @@ const EnvSchema = z.object({
   HTTP_ALLOWLIST: z.string().optional(),
   APP_RELEASE_DIR: z.string().optional(),
   WEB_DIR: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  MAIL_FROM: z.string().optional(),
   BRIDGE_TOKEN: z.string().optional(),
 });
 
@@ -154,6 +166,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .filter((entry) => entry !== ''),
     appReleaseDir: e.APP_RELEASE_DIR?.trim() || './data/app',
     webDir: e.WEB_DIR?.trim() || './web',
+    smtpHost: e.SMTP_HOST?.trim() ?? '',
+    smtpPort: num(e.SMTP_PORT, 587),
+    smtpUser: e.SMTP_USER?.trim() ?? '',
+    smtpPass: e.SMTP_PASS?.trim() ?? '',
+    mailFrom: e.MAIL_FROM?.trim() || e.SMTP_USER?.trim() || '',
     bridgeToken: e.BRIDGE_TOKEN?.trim() ?? '',
   };
   if (!config.mock && config.deepseekApiKey === '') {

@@ -124,13 +124,8 @@ export function registerPairingRoute(
     }
     pairing.resetFailures(source);
 
-    const token = randomBytes(32).toString('base64url');
-    const deviceId = randomUUID();
     const name = parsed.data.device_name?.trim() || '未命名设备';
-    const ts = nowIso();
-    db.prepare(
-      'INSERT INTO device (id, name, paired_at, last_seen, token_hash) VALUES (?, ?, ?, ?, ?)',
-    ).run(deviceId, name, ts, ts, sha256(token));
+    const issued = issueDeviceToken(db, name);
 
     const nextCode = pairing.rotate();
     if (nextCode !== null) {
@@ -139,8 +134,19 @@ export function registerPairingRoute(
       app.log.info(`设备已配对: ${name}(配对码为固定模式,不轮换)`);
     }
 
-    return reply.code(201).send({ device_id: deviceId, device_name: name, token });
+    return reply.code(201).send({ device_id: issued.deviceId, device_name: name, token: issued.token });
   });
+}
+
+/** 签发设备令牌(v1.9.0 起配对与账号登录共用):明文只在返回值里出现一次,库中只存 sha256。 */
+export function issueDeviceToken(db: Db, name: string): { deviceId: string; token: string } {
+  const token = randomBytes(32).toString('base64url');
+  const deviceId = randomUUID();
+  const ts = nowIso();
+  db.prepare(
+    'INSERT INTO device (id, name, paired_at, last_seen, token_hash) VALUES (?, ?, ?, ?, ?)',
+  ).run(deviceId, name, ts, ts, sha256(token));
+  return { deviceId, token };
 }
 
 /**

@@ -146,6 +146,25 @@ CREATE TABLE IF NOT EXISTS app_setting (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- v1.9.0:邮箱账号(单人;仅允许一个账号)。密码只存 scrypt 哈希。
+CREATE TABLE IF NOT EXISTS user_account (
+  id             TEXT PRIMARY KEY,
+  email          TEXT NOT NULL UNIQUE,
+  password_hash  TEXT NOT NULL,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL
+);
+
+-- v1.9.0:邮箱验证码(激活/重置密码)。只存哈希,明文只走邮件;一次性、限时。
+CREATE TABLE IF NOT EXISTS auth_token (
+  id         TEXT PRIMARY KEY,
+  email      TEXT NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('verify','reset')),
+  code_hash  TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at    TEXT
+);
 `;
 
 /** 给既有库补列(SQLite 没有 ADD COLUMN IF NOT EXISTS)。 */

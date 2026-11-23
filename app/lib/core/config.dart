@@ -11,6 +11,7 @@ class SecureStore {
   static const String _serverUrlKey = 'jingling.server_url';
   static const String _tokenKey = 'jingling.device_token';
   static const String _updateSourceKey = 'jingling.update_source';
+  static const String _accountEmailKey = 'jingling.account_email';
 
   Future<String> readServerUrl() async {
     final value = await _storage.read(key: _serverUrlKey);
@@ -31,6 +32,20 @@ class SecureStore {
 
   Future<void> writeUpdateSource(String source) async {
     await _storage.write(key: _updateSourceKey, value: source == 'github' ? 'github' : 'server');
+  }
+
+  /// v1.9.0:登录邮箱(只在本机留一份,设置页展示用)。
+  Future<String?> readAccountEmail() async {
+    final value = await _storage.read(key: _accountEmailKey);
+    return value == null || value.trim().isEmpty ? null : value.trim();
+  }
+
+  Future<void> writeAccountEmail(String? email) async {
+    if (email == null || email.trim().isEmpty) {
+      await _storage.delete(key: _accountEmailKey);
+      return;
+    }
+    await _storage.write(key: _accountEmailKey, value: email.trim());
   }
 
   Future<String?> readToken() async {

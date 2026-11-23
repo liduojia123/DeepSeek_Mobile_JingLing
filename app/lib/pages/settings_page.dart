@@ -493,8 +493,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.link_off, color: theme.colorScheme.error),
-            title: Text('解除配对', style: TextStyle(color: theme.colorScheme.error)),
-            subtitle: Text(settings?.paired == true ? '当前设备已配对' : '当前未配对'),
+            // v1.9.0:账号模式下这行就是「退出登录」(动作相同:清本地令牌);配对模式保留原义
+            title: Text(
+              settings?.accountEmail != null ? '退出登录' : '解除配对',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+            subtitle: Text(
+              settings?.accountEmail != null
+                  ? '已登录:${settings?.accountEmail}'
+                  : (settings?.paired == true ? '当前设备已配对' : '当前未配对'),
+            ),
             onTap: _unpair,
           ),
           const Divider(height: 32),
